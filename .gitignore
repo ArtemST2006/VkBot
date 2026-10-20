@@ -1,0 +1,27 @@
+# Локальные кеши, бинарные файлы и отчеты, которые не должны попадать в Git.
+# Go
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+/vendor/
+
+# Tools and reports
+/.cache/
+/coverage.html
+/coverage.xml
+/report.xml
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local environment
+.env
+/.local/
+
+# report.md
+report.md
