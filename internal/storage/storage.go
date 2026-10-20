@@ -9,8 +9,14 @@ import (
 // Repository groups storage implementations in one dependency, as in GorkyCode.
 type Repository struct {
 	*postgres.Users
+	*postgres.Promos
+	*postgres.Raffles
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{Users: postgres.NewUsers(pool)}
+	return &Repository{
+		Users:   postgres.NewUsers(pool),
+		Promos:  postgres.NewPromos(pool),
+		Raffles: postgres.NewRaffles(pool),
+	}
 }

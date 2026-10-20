@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ArtemST2006/VkBot/internal/domain"
 	"github.com/ArtemST2006/VkBot/internal/service"
 	"github.com/ArtemST2006/VkBot/internal/subscription"
 )
@@ -163,3 +164,19 @@ type integrationUsers struct{}
 func (integrationUsers) EnsureUser(context.Context, int64) error { return nil }
 
 func (integrationUsers) ActiveDayCount(context.Context, int64) (int, error) { return 0, nil }
+
+func (integrationUsers) IssuePromo(context.Context, int64) (domain.PromoResult, error) {
+	return domain.PromoResult{Outcome: domain.PromoUnavailable}, nil
+}
+
+func (integrationUsers) TodayPartner(context.Context) (*domain.PartnerDay, error) {
+	return &domain.PartnerDay{ID: 1, Slug: "demo", Name: "Демо-партнёр"}, nil
+}
+
+func (integrationUsers) ExistingRaffle(context.Context, int64, int64) (*domain.RaffleResult, error) {
+	return nil, nil
+}
+
+func (integrationUsers) RegisterRaffle(context.Context, int64, int64) (domain.RaffleResult, error) {
+	return domain.RaffleResult{Outcome: domain.RaffleJoined, PartnerName: "Демо-партнёр", Chances: 1}, nil
+}

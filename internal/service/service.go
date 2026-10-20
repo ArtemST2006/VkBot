@@ -1,56 +1,24 @@
+// Package service contains application scenarios between VK and storage.
 package service
 
-import (
-	"context"
-	"fmt"
-
-	"github.com/ArtemST2006/VkBot/internal/domain"
-)
-
-// UserRepository is the storage needed by the first bot scenarios.
-type UserRepository interface {
-	EnsureUser(ctx context.Context, userID int64) error
-	ActiveDayCount(ctx context.Context, userID int64) (int, error)
+// Repositories lists the storage operations needed by all services.
+type Repositories interface {
+	UserRepository
+	PromoRepository
+	RaffleRepository
 }
 
-// SubscriptionChecker can later be replaced with a real community check.
-type SubscriptionChecker interface {
-	IsSubscribed(ctx context.Context, userID int64, partnerID string) (bool, error)
+// Services groups application services for transport wiring.
+type Services struct {
+	*UserService
+	*PromoService
+	*RaffleService
 }
 
-type Service struct {
-	users         UserRepository
-	subscriptions SubscriptionChecker
-}
-
-func NewService(users UserRepository, subscriptions SubscriptionChecker) *Service {
-	return &Service{users: users, subscriptions: subscriptions}
-}
-
-func (s *Service) Start(ctx context.Context, userID int64) error {
-	if userID <= 0 {
-		return fmt.Errorf("invalid user ID: %d", userID)
+func New(repo Repositories, subscriptions SubscriptionChecker) *Services {
+	return &Services{
+		UserService:   NewUserService(repo),
+		PromoService:  NewPromoService(repo),
+		RaffleService: NewRaffleService(repo, subscriptions),
 	}
-	return s.users.EnsureUser(ctx, userID)
-}
-
-func (s *Service) MyChances(ctx context.Context, userID int64) (domain.Chances, error) {
-	if userID <= 0 {
-		return domain.Chances{}, fmt.Errorf("invalid user ID: %d", userID)
-	}
-	count, err := s.users.ActiveDayCount(ctx, userID)
-	if err != nil {
-		return domain.Chances{}, err
-	}
-	if count > domain.MaxChances {
-		count = domain.MaxChances
-	}
-	return domain.Chances{Earned: count, Maximum: domain.MaxChances}, nil
-}
-
-func (s *Service) CheckSubscription(ctx context.Context, userID int64, partnerID string) (bool, error) {
-	if userID <= 0 {
-		return false, fmt.Errorf("invalid user ID: %d", userID)
-	}
-	return s.subscriptions.IsSubscribed(ctx, userID, partnerID)
 }

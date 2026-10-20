@@ -2,9 +2,12 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
+	"github.com/ArtemST2006/VkBot/internal/domain"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,4 +45,21 @@ func (r *Users) ActiveDayCount(ctx context.Context, userID int64) (int, error) {
 		return 0, fmt.Errorf("count active days for VK user %d: %w", userID, err)
 	}
 	return count, nil
+}
+
+// lockUser serializes a user's promo and raffle writes within their transactions.
+func lockUser(ctx context.Context, tx pgx.Tx, userID int64) (int64, error) {
+	var internalID int64
+	err := tx.QueryRow(ctx, `
+		SELECT id FROM users
+		WHERE platform = 'vk' AND external_id = $1
+		FOR UPDATE
+	`, strconv.FormatInt(userID, 10)).Scan(&internalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("VK user %d: %w", userID, domain.ErrUserNotStarted)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find VK user %d: %w", userID, err)
+	}
+	return internalID, nil
 }

@@ -10,12 +10,16 @@ import (
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/navigation"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/participation"
+	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/promo"
+	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/rules"
 )
 
 type BotService interface {
 	Start(ctx context.Context, userID int64) error
 	MyChances(ctx context.Context, userID int64) (domain.Chances, error)
-	CheckSubscription(ctx context.Context, userID int64, partnerID string) (bool, error)
+	IssuePromo(ctx context.Context, userID int64) (domain.PromoResult, error)
+	TodayPartner(ctx context.Context) (*domain.PartnerDay, error)
+	JoinRaffle(ctx context.Context, userID int64) (domain.RaffleResult, error)
 }
 
 type Messenger interface {
@@ -36,12 +40,12 @@ type Handler struct {
 func NewHandler(service BotService, messenger Messenger, log *slog.Logger) *Handler {
 	actions := []handlers.Callback{
 		navigation.NewMenu(messenger),
-		handlers.NewPromo(messenger),
-		participation.NewRaffle(messenger),
+		promo.NewPromo(service, messenger),
+		participation.NewRaffle(service, messenger),
 		participation.NewSubscription(service, messenger),
 		participation.NewHowToParticipate(messenger),
 		participation.NewChances(service, messenger),
-		handlers.NewRules(messenger),
+		rules.NewRules(messenger),
 	}
 	routes := make(map[string]handlers.Callback, len(actions))
 	for _, handler := range actions {
@@ -66,32 +70,40 @@ func (h *Handler) Handle(ctx context.Context, update Update) error {
 	h.log.DebugContext(ctx, "VK update received", slog.String("type", update.Type), slog.Int64("user_id", userID))
 	switch update.Type {
 	case "message_new":
-		if update.Object.Message == nil || userID <= 0 || peerID <= 0 {
-			return fmt.Errorf("message_new without sender or peer")
-		}
-		if update.Object.Message.Out != 0 || peerID != userID {
-			return nil
-		}
-		message := strings.TrimSpace(update.Object.Message.Text)
-		if h.start.Matches(message) {
-			return h.start.Handle(ctx, userID)
-		}
-		return h.messageUnknown.Handle(ctx, userID)
+		return h.handleMessage(ctx, update, userID, peerID)
 	case "message_event":
-		if update.Object.EventID == "" || userID <= 0 || peerID <= 0 {
-			return fmt.Errorf("message_event without event, user or peer ID")
-		}
-		if peerID != userID {
-			return nil
-		}
-		if err := h.messenger.Ack(ctx, update.Object.EventID, userID, peerID); err != nil {
-			return err
-		}
-		if handler, ok := h.actions[update.Action()]; ok {
-			return handler.Handle(ctx, userID)
-		}
-		return h.actionUnknown.Handle(ctx, userID)
+		return h.handleCallback(ctx, update, userID, peerID)
 	default:
 		return nil
 	}
+}
+
+func (h *Handler) handleMessage(ctx context.Context, update Update, userID, peerID int64) error {
+	if update.Object.Message == nil || userID <= 0 || peerID <= 0 {
+		return fmt.Errorf("message_new without sender or peer")
+	}
+	if update.Object.Message.Out != 0 || peerID != userID {
+		return nil
+	}
+	message := strings.TrimSpace(update.Object.Message.Text)
+	if h.start.Matches(message) {
+		return h.start.Handle(ctx, userID)
+	}
+	return h.messageUnknown.Handle(ctx, userID)
+}
+
+func (h *Handler) handleCallback(ctx context.Context, update Update, userID, peerID int64) error {
+	if update.Object.EventID == "" || userID <= 0 || peerID <= 0 {
+		return fmt.Errorf("message_event without event, user or peer ID")
+	}
+	if peerID != userID {
+		return nil
+	}
+	if err := h.messenger.Ack(ctx, update.Object.EventID, userID, peerID); err != nil {
+		return err
+	}
+	if handler, ok := h.actions[update.Action()]; ok {
+		return handler.Handle(ctx, userID)
+	}
+	return h.actionUnknown.Handle(ctx, userID)
 }
