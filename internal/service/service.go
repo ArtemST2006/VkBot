@@ -1,56 +1,121 @@
+// Package service contains the bot's application logic without VK or SQL details.
 package service
 
 import (
 	"context"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
 )
 
-// UserRepository is the storage needed by the first bot scenarios.
-type UserRepository interface {
+type Repository interface {
 	EnsureUser(ctx context.Context, userID int64) error
-	ActiveDayCount(ctx context.Context, userID int64) (int, error)
-}
-
-// SubscriptionChecker can later be replaced with a real community check.
-type SubscriptionChecker interface {
-	IsSubscribed(ctx context.Context, userID int64, partnerID string) (bool, error)
+	Chances(ctx context.Context, userID int64) (domain.Chances, error)
+	IssuePromo(ctx context.Context, userID int64) (domain.PromoResult, error)
+	TodayPartner(ctx context.Context) (*domain.PartnerDay, error)
+	ExistingRaffle(ctx context.Context, userID, dayID int64) (*domain.RaffleResult, error)
+	RegisterRaffle(ctx context.Context, userID, dayID int64) (domain.RaffleResult, error)
+	StartPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error)
+	PendingPrizeName(ctx context.Context, userID int64) (bool, error)
+	SavePrizeName(ctx context.Context, userID int64, fullName string) (int64, domain.ClaimStatus, error)
+	ConsentPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error)
 }
 
 type Service struct {
-	users         UserRepository
-	subscriptions SubscriptionChecker
+	repo Repository
 }
 
-func NewService(users UserRepository, subscriptions SubscriptionChecker) *Service {
-	return &Service{users: users, subscriptions: subscriptions}
+func New(repo Repository) *Service {
+	return &Service{repo: repo}
 }
 
 func (s *Service) Start(ctx context.Context, userID int64) error {
 	if userID <= 0 {
 		return fmt.Errorf("invalid user ID: %d", userID)
 	}
-	return s.users.EnsureUser(ctx, userID)
+	return s.repo.EnsureUser(ctx, userID)
 }
 
 func (s *Service) MyChances(ctx context.Context, userID int64) (domain.Chances, error) {
 	if userID <= 0 {
 		return domain.Chances{}, fmt.Errorf("invalid user ID: %d", userID)
 	}
-	count, err := s.users.ActiveDayCount(ctx, userID)
+	chances, err := s.repo.Chances(ctx, userID)
 	if err != nil {
 		return domain.Chances{}, err
 	}
-	if count > domain.MaxChances {
-		count = domain.MaxChances
+	if chances.Earned > domain.MaxChances {
+		chances.Earned = domain.MaxChances
 	}
-	return domain.Chances{Earned: count, Maximum: domain.MaxChances}, nil
+	chances.Maximum = domain.MaxChances
+	return chances, nil
 }
 
-func (s *Service) CheckSubscription(ctx context.Context, userID int64, partnerID string) (bool, error) {
+func (s *Service) IssuePromo(ctx context.Context, userID int64) (domain.PromoResult, error) {
 	if userID <= 0 {
-		return false, fmt.Errorf("invalid user ID: %d", userID)
+		return domain.PromoResult{}, fmt.Errorf("invalid user ID: %d", userID)
 	}
-	return s.subscriptions.IsSubscribed(ctx, userID, partnerID)
+	return s.repo.IssuePromo(ctx, userID)
+}
+
+func (s *Service) JoinRaffle(ctx context.Context, userID int64) (domain.RaffleResult, error) {
+	if userID <= 0 {
+		return domain.RaffleResult{}, fmt.Errorf("invalid user ID: %d", userID)
+	}
+	partner, err := s.repo.TodayPartner(ctx)
+	if err != nil {
+		return domain.RaffleResult{}, err
+	}
+	if partner == nil {
+		return domain.RaffleResult{Outcome: domain.RaffleUnavailable}, nil
+	}
+	existing, err := s.repo.ExistingRaffle(ctx, userID, partner.ID)
+	if err != nil {
+		return domain.RaffleResult{}, err
+	}
+	var result domain.RaffleResult
+	if existing != nil {
+		result = *existing
+	} else {
+		result, err = s.repo.RegisterRaffle(ctx, userID, partner.ID)
+		if err != nil {
+			return domain.RaffleResult{}, err
+		}
+	}
+	result.AccountURL = partner.AccountURL
+	result.PrizeName = partner.PrizeName
+	if result.Chances > domain.MaxChances {
+		result.Chances = domain.MaxChances
+	}
+	return result, nil
+}
+
+func (s *Service) StartPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error) {
+	return s.repo.StartPrizeClaim(ctx, drawID, userID)
+}
+
+func (s *Service) PendingPrizeName(ctx context.Context, userID int64) (bool, error) {
+	return s.repo.PendingPrizeName(ctx, userID)
+}
+
+func (s *Service) SavePrizeName(ctx context.Context, userID int64, input string) (int64, domain.ClaimStatus, error) {
+	parts := strings.Fields(input)
+	if len(parts) < 2 || utf8.RuneCountInString(input) > 120 {
+		return 0, "", domain.ErrInvalidFullName
+	}
+	for _, part := range parts {
+		for _, char := range part {
+			if !unicode.IsLetter(char) && char != '-' {
+				return 0, "", domain.ErrInvalidFullName
+			}
+		}
+	}
+	return s.repo.SavePrizeName(ctx, userID, strings.Join(parts, " "))
+}
+
+func (s *Service) ConsentPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error) {
+	return s.repo.ConsentPrizeClaim(ctx, drawID, userID)
 }

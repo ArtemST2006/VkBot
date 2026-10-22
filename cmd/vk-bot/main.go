@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -14,8 +13,7 @@ import (
 
 	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 	"github.com/ArtemST2006/VkBot/internal/service"
-	"github.com/ArtemST2006/VkBot/internal/storage"
-	"github.com/ArtemST2006/VkBot/internal/subscription"
+	"github.com/ArtemST2006/VkBot/internal/storage/postgres"
 	"github.com/ArtemST2006/VkBot/internal/vkbot"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -56,11 +54,12 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
 
-	// Composition root: concrete adapters are assembled only here.
-	client := vkbot.NewClient(token, groupID, "", &http.Client{Timeout: 40 * time.Second})
-	repo := storage.NewRepository(pool)
-	services := service.New(repo, subscription.NewStubChecker())
-	handler := vkbot.NewHandler(services, client, log)
+	client := vkbot.NewClient(token, groupID, "", nil)
+	repo := postgres.New(pool)
+	svc := service.New(repo)
+	handler := vkbot.NewHandler(svc, client, log)
+	go vkbot.RunNotifications(ctx, repo, client, log)
+	go service.RunDrawScheduler(ctx, repo, log)
 
 	log.Info("starting VK bot", slog.String("mode", "polling"), slog.Int64("group_id", groupID))
 	if err := vkbot.RunPolling(ctx, client, handler); err != nil && !errors.Is(err, context.Canceled) {
