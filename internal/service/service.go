@@ -24,17 +24,12 @@ type Repository interface {
 	ConsentPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error)
 }
 
-type SubscriptionChecker interface {
-	IsSubscribed(ctx context.Context, userID int64, partnerID string) (bool, error)
-}
-
 type Service struct {
-	repo    Repository
-	checker SubscriptionChecker
+	repo Repository
 }
 
-func New(repo Repository, checker SubscriptionChecker) *Service {
-	return &Service{repo: repo, checker: checker}
+func New(repo Repository) *Service {
+	return &Service{repo: repo}
 }
 
 func (s *Service) Start(ctx context.Context, userID int64) error {
@@ -66,10 +61,6 @@ func (s *Service) IssuePromo(ctx context.Context, userID int64) (domain.PromoRes
 	return s.repo.IssuePromo(ctx, userID)
 }
 
-func (s *Service) TodayPartner(ctx context.Context) (*domain.PartnerDay, error) {
-	return s.repo.TodayPartner(ctx)
-}
-
 func (s *Service) JoinRaffle(ctx context.Context, userID int64) (domain.RaffleResult, error) {
 	if userID <= 0 {
 		return domain.RaffleResult{}, fmt.Errorf("invalid user ID: %d", userID)
@@ -89,23 +80,13 @@ func (s *Service) JoinRaffle(ctx context.Context, userID int64) (domain.RaffleRe
 	if existing != nil {
 		result = *existing
 	} else {
-		subscribed, err := s.checker.IsSubscribed(ctx, userID, partner.Slug)
-		if err != nil {
-			return domain.RaffleResult{}, err
-		}
-		if !subscribed {
-			return domain.RaffleResult{
-				Outcome:     domain.RaffleUnsubscribed,
-				PartnerName: partner.Name,
-				AccountURL:  partner.AccountURL,
-			}, nil
-		}
 		result, err = s.repo.RegisterRaffle(ctx, userID, partner.ID)
 		if err != nil {
 			return domain.RaffleResult{}, err
 		}
 	}
 	result.AccountURL = partner.AccountURL
+	result.PrizeName = partner.PrizeName
 	if result.Chances > domain.MaxChances {
 		result.Chances = domain.MaxChances
 	}

@@ -12,7 +12,6 @@ import (
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
 	"github.com/ArtemST2006/VkBot/internal/service"
-	"github.com/ArtemST2006/VkBot/internal/subscription"
 )
 
 func TestPollingRoutesMessagesAndButtons(t *testing.T) {
@@ -132,7 +131,7 @@ func TestPollingRoutesMessagesAndButtons(t *testing.T) {
 	})
 
 	client := NewClient("test-token", 123, "https://vk.test/method", &http.Client{Transport: transport})
-	services := service.New(integrationUsers{}, subscription.NewStubChecker())
+	services := service.New(integrationUsers{})
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := NewHandler(services, client, log)
 	if err := RunPolling(ctx, client, handler); !errors.Is(err, context.Canceled) {
@@ -242,7 +241,7 @@ func (integrationUsers) IssuePromo(context.Context, int64) (domain.PromoResult, 
 }
 
 func (integrationUsers) TodayPartner(context.Context) (*domain.PartnerDay, error) {
-	return &domain.PartnerDay{ID: 1, Slug: "demo", Name: "Демо-партнёр"}, nil
+	return &domain.PartnerDay{ID: 1, Name: "Демо-партнёр"}, nil
 }
 
 func (integrationUsers) ExistingRaffle(context.Context, int64, int64) (*domain.RaffleResult, error) {

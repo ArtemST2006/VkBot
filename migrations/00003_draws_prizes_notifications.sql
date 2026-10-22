@@ -5,6 +5,7 @@ SELECT user_id, partner_day_id FROM raffle_entries
 UNION
 SELECT assigned_user_id AS user_id, partner_day_id
 FROM promo_codes WHERE assigned_user_id IS NOT NULL;
+ALTER TABLE raffle_entries DROP COLUMN subscription_checked_at;
 
 CREATE TABLE draws (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -55,6 +56,9 @@ DROP TABLE notification_outbox;
 DROP TABLE draw_results;
 DROP TABLE draws;
 DROP VIEW active_days;
+ALTER TABLE raffle_entries ADD COLUMN subscription_checked_at TIMESTAMPTZ;
+UPDATE raffle_entries SET subscription_checked_at = registered_at;
+ALTER TABLE raffle_entries ALTER COLUMN subscription_checked_at SET NOT NULL;
 CREATE TABLE active_days (
     user_id BIGINT NOT NULL REFERENCES users(id),
     partner_day_id BIGINT NOT NULL REFERENCES partner_days(id),

@@ -17,6 +17,16 @@ services:
       timeout: 3s
       retries: 10
 
+  vkbot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER:-vkuser}:${POSTGRES_PASSWORD:-tty}@postgres:5432/${POSTGRES_DB:-vkdb}?sslmode=disable"
 
 volumes:
   postgres_data:

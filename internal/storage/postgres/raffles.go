@@ -13,11 +13,11 @@ import (
 func (r *Repository) TodayPartner(ctx context.Context) (*domain.PartnerDay, error) {
 	var partner domain.PartnerDay
 	err := r.pool.QueryRow(ctx, `
-		SELECT d.id, p.slug, p.name, p.account_url, COALESCE(d.prize_name, '')
+		SELECT d.id, p.name, p.account_url, COALESCE(d.prize_name, '')
 		FROM partner_days AS d
 		JOIN partners AS p ON p.id = d.partner_id
 		WHERE d.event_date = (now() AT TIME ZONE 'Europe/Moscow')::date
-	`).Scan(&partner.ID, &partner.Slug, &partner.Name, &partner.AccountURL, &partner.PrizeName)
+	`).Scan(&partner.ID, &partner.Name, &partner.AccountURL, &partner.PrizeName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -81,8 +81,8 @@ func (r *Repository) RegisterRaffle(ctx context.Context, userID, dayID int64) (d
 		result.Outcome = domain.RaffleAlreadyJoined
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO raffle_entries (user_id, partner_day_id, subscription_checked_at)
-			VALUES ($1, $2, now())
+			INSERT INTO raffle_entries (user_id, partner_day_id)
+			VALUES ($1, $2)
 		`, internalUserID, dayID); err != nil {
 			return domain.RaffleResult{}, fmt.Errorf("register raffle entry: %w", err)
 		}

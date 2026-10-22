@@ -23,8 +23,7 @@ func TestHandlerRoutesCallbackScenarios(t *testing.T) {
 	}{
 		{name: "menu", action: handlers.ActionMenu, wantMessage: "Добро пожаловать", wantButtons: 5},
 		{name: "promo", action: handlers.ActionPromo, wantMessage: "Промокод: DEMO-01", wantButtons: 2},
-		{name: "raffle", action: handlers.ActionRaffle, wantMessage: "Розыгрыш призов от Демо-партнёр", wantButtons: 2},
-		{name: "subscription", action: handlers.ActionSubscriptionCheck, wantMessage: "Заявка на розыгрыш призов", wantButtons: 1},
+		{name: "raffle", action: handlers.ActionRaffle, wantMessage: "Заявка на розыгрыш призов", wantButtons: 1},
 		{name: "how to participate", action: handlers.ActionHowToParticipate, wantMessage: "Как участвовать", wantButtons: 4},
 		{name: "chances", action: handlers.ActionChances, wantMessage: "3 из 10", wantButtons: 1},
 		{name: "rules", action: handlers.ActionRules, wantMessage: "Правила акции", wantButtons: 1},
@@ -39,7 +38,7 @@ func TestHandlerRoutesCallbackScenarios(t *testing.T) {
 				Outcome: domain.PromoIssued, PartnerName: "Демо-партнёр", Code: "DEMO-01",
 				ValidUntil: time.Date(2026, time.October, 20, 20, 59, 0, 0, time.UTC),
 			}, partner: &domain.PartnerDay{Name: "Демо-партнёр", AccountURL: "https://example.com/partner", PrizeName: "Тестовый приз"},
-				raffleResult: domain.RaffleResult{Outcome: domain.RaffleJoined, PartnerName: "Демо-партнёр", Chances: 1}}
+				raffleResult: domain.RaffleResult{Outcome: domain.RaffleJoined, PartnerName: "Демо-партнёр", PrizeName: "Тестовый приз", AccountURL: "https://example.com/partner", Chances: 1}}
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
 			handler := NewHandler(service, messenger, log)
 			payload, err := json.Marshal(struct {
@@ -221,7 +220,6 @@ func TestRaffleCallbackOtherOutcomes(t *testing.T) {
 		wantRows int
 	}{
 		{name: "repeat", result: domain.RaffleResult{Outcome: domain.RaffleAlreadyJoined, Chances: 1}, wantText: "уже участвуешь", wantRows: 1},
-		{name: "unsubscribed", result: domain.RaffleResult{Outcome: domain.RaffleUnsubscribed, PartnerName: "Демо-партнёр", AccountURL: "https://example.com/partner"}, wantText: "Пока не вижу подписку", wantRows: 2},
 		{name: "unavailable", result: domain.RaffleResult{Outcome: domain.RaffleUnavailable}, wantText: "розыгрыш пока недоступен", wantRows: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,7 +227,7 @@ func TestRaffleCallbackOtherOutcomes(t *testing.T) {
 			messenger := &recordingMessenger{}
 			handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			var update Update
-			if err := json.Unmarshal([]byte(`{"type":"message_event","object":{"user_id":42,"peer_id":42,"event_id":"event-1","payload":{"action":"subscription:check"}}}`), &update); err != nil {
+			if err := json.Unmarshal([]byte(`{"type":"message_event","object":{"user_id":42,"peer_id":42,"event_id":"event-1","payload":{"action":"raffle:join"}}}`), &update); err != nil {
 				t.Fatal(err)
 			}
 			if err := handler.Handle(context.Background(), update); err != nil {

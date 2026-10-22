@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
+	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/navigation"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/participation"
@@ -21,7 +22,6 @@ type BotService interface {
 	Start(ctx context.Context, userID int64) error
 	MyChances(ctx context.Context, userID int64) (domain.Chances, error)
 	IssuePromo(ctx context.Context, userID int64) (domain.PromoResult, error)
-	TodayPartner(ctx context.Context) (*domain.PartnerDay, error)
 	JoinRaffle(ctx context.Context, userID int64) (domain.RaffleResult, error)
 }
 
@@ -44,17 +44,16 @@ type Handler struct {
 
 func NewHandler(service BotService, messenger Messenger, log *slog.Logger) *Handler {
 	return &Handler{
-		start:          navigation.NewStart(service, messenger),
-		messageUnknown: navigation.NewUnknownMessage(messenger),
-		actionUnknown:  navigation.NewUnknownAction(messenger),
+		start:          withHandlerLog(log, "navigation.start", navigation.NewStart(service, messenger)),
+		messageUnknown: withHandlerLog(log, "navigation.unknown_message", navigation.NewUnknownMessage(messenger)),
+		actionUnknown:  withHandlerLog(log, "navigation.unknown_action", navigation.NewUnknownAction(messenger)),
 		actions: map[string]handlers.Func{
-			handlers.ActionMenu:              navigation.NewMenu(messenger),
-			handlers.ActionPromo:             promo.NewPromo(service, messenger),
-			handlers.ActionRaffle:            participation.NewRaffle(service, messenger),
-			handlers.ActionSubscriptionCheck: participation.NewSubscription(service, messenger),
-			handlers.ActionHowToParticipate:  participation.NewHowToParticipate(messenger),
-			handlers.ActionChances:           participation.NewChances(service, messenger),
-			handlers.ActionRules:             rules.NewRules(messenger),
+			handlers.ActionMenu:             withHandlerLog(log, "navigation.menu", navigation.NewMenu(messenger)),
+			handlers.ActionPromo:            withHandlerLog(log, "promo.issue", promo.NewPromo(service, messenger)),
+			handlers.ActionRaffle:           withHandlerLog(log, "participation.raffle", participation.NewRaffle(service, messenger)),
+			handlers.ActionHowToParticipate: withHandlerLog(log, "participation.how_to_participate", participation.NewHowToParticipate(messenger)),
+			handlers.ActionChances:          withHandlerLog(log, "participation.chances", participation.NewChances(service, messenger)),
+			handlers.ActionRules:            withHandlerLog(log, "rules.show", rules.NewRules(messenger)),
 		},
 		messenger: messenger,
 		service:   service,
@@ -92,7 +91,7 @@ func (h *Handler) handleMessage(ctx context.Context, update Update, userID, peer
 		return err
 	}
 	if pending {
-		return prize.NewName(h.service, h.messenger, message)(ctx, userID)
+		return withHandlerLog(h.log, "prize.name", prize.NewName(h.service, h.messenger, message))(ctx, userID)
 	}
 	return h.messageUnknown(ctx, userID)
 }
@@ -113,13 +112,25 @@ func (h *Handler) handleCallback(ctx context.Context, update Update, userID, pee
 	}
 	if strings.HasPrefix(action, handlers.ActionPrizeClaimPrefix) {
 		if drawID, err := strconv.ParseInt(strings.TrimPrefix(action, handlers.ActionPrizeClaimPrefix), 10, 64); err == nil && drawID > 0 {
-			return prize.NewClaim(h.service, h.messenger, drawID)(ctx, userID)
+			return withHandlerLog(h.log, "prize.claim", prize.NewClaim(h.service, h.messenger, drawID))(ctx, userID)
 		}
 	}
 	if strings.HasPrefix(action, handlers.ActionPrizeConsentPrefix) {
 		if drawID, err := strconv.ParseInt(strings.TrimPrefix(action, handlers.ActionPrizeConsentPrefix), 10, 64); err == nil && drawID > 0 {
-			return prize.NewConsent(h.service, h.messenger, drawID)(ctx, userID)
+			return withHandlerLog(h.log, "prize.consent", prize.NewConsent(h.service, h.messenger, drawID))(ctx, userID)
 		}
 	}
 	return h.actionUnknown(ctx, userID)
+}
+
+func withHandlerLog(base *slog.Logger, op string, handler handlers.Func) handlers.Func {
+	return func(ctx context.Context, userID int64) error {
+		log := base.With(slog.String("op", op), slog.Int64("user_id", userID))
+		if err := handler(ctx, userID); err != nil {
+			log.ErrorContext(ctx, "handler failed", logger.Err(err))
+			return err
+		}
+		log.InfoContext(ctx, "handler completed")
+		return nil
+	}
 }

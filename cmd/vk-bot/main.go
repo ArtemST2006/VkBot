@@ -14,7 +14,6 @@ import (
 	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 	"github.com/ArtemST2006/VkBot/internal/service"
 	"github.com/ArtemST2006/VkBot/internal/storage/postgres"
-	"github.com/ArtemST2006/VkBot/internal/subscription"
 	"github.com/ArtemST2006/VkBot/internal/vkbot"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -57,7 +56,7 @@ func run(log *slog.Logger) error {
 
 	client := vkbot.NewClient(token, groupID, "", nil)
 	repo := postgres.New(pool)
-	svc := service.New(repo, subscription.NewStubChecker())
+	svc := service.New(repo)
 	handler := vkbot.NewHandler(svc, client, log)
 	go vkbot.RunNotifications(ctx, repo, client, log)
 	go service.RunDrawScheduler(ctx, repo, log)

@@ -15,7 +15,6 @@ import (
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
 	"github.com/ArtemST2006/VkBot/internal/service"
-	"github.com/ArtemST2006/VkBot/internal/subscription"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -131,10 +130,10 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err := pool.QueryRow(ctx, "INSERT INTO partner_days (partner_id, event_date) VALUES ($1, '2035-01-01') RETURNING id", partnerID).Scan(&dayID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "INSERT INTO raffle_entries (user_id, partner_day_id, subscription_checked_at) VALUES ($1, $2, now())", userID, dayID); err != nil {
+	if _, err := pool.Exec(ctx, "INSERT INTO raffle_entries (user_id, partner_day_id) VALUES ($1, $2)", userID, dayID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "INSERT INTO raffle_entries (user_id, partner_day_id, subscription_checked_at) VALUES ($1, $2, now())", userID, dayID); err == nil {
+	if _, err := pool.Exec(ctx, "INSERT INTO raffle_entries (user_id, partner_day_id) VALUES ($1, $2)", userID, dayID); err == nil {
 		t.Fatal("same user registered twice for one partner day")
 	}
 	if _, err := pool.Exec(ctx, "INSERT INTO promo_codes (partner_day_id, code, assigned_user_id, assigned_at) VALUES ($1, 'A', $2, now())", dayID, userID); err != nil {
@@ -268,7 +267,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || partner == nil || partner.Name == "" || partner.AccountURL == "" || partner.PrizeName == "" {
 		t.Fatalf("today's partner=%+v, err=%v", partner, err)
 	}
-	bot := service.New(repo, subscription.NewStubChecker())
+	bot := service.New(repo)
 	progress, err := bot.MyChances(ctx, 42)
 	if err != nil || progress.Earned != 2 || progress.Maximum != domain.MaxChances ||
 		progress.PassedDays+progress.RemainingDays != 11 || len(progress.ActiveDays) != 2 ||
@@ -322,23 +321,6 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if len(raffleOutcomes) != 2 || !hasRaffleOutcome(raffleOutcomes, domain.RaffleJoined) ||
 		!hasRaffleOutcome(raffleOutcomes, domain.RaffleAlreadyJoined) {
 		t.Fatalf("concurrent raffle outcomes=%v", raffleOutcomes)
-	}
-
-	if err := repo.EnsureUser(ctx, 49); err != nil {
-		t.Fatal(err)
-	}
-	denied := service.New(repo, deniedChecker{})
-	notSubscribed, err := denied.JoinRaffle(ctx, 49)
-	if err != nil || notSubscribed.Outcome != domain.RaffleUnsubscribed {
-		t.Fatalf("denied raffle=%+v, err=%v", notSubscribed, err)
-	}
-	summary, err = repo.Chances(ctx, 49)
-	if err != nil || summary.Earned != 0 {
-		t.Fatalf("active days without subscription=%d, err=%v", summary.Earned, err)
-	}
-	repeatedJoin, err = denied.JoinRaffle(ctx, 42)
-	if err != nil || repeatedJoin.Outcome != domain.RaffleAlreadyJoined {
-		t.Fatalf("existing entry after lost subscription=%+v, err=%v", repeatedJoin, err)
 	}
 
 	if _, err := repo.DrawFinal(ctx); err == nil {
@@ -465,10 +447,4 @@ func hasRaffleOutcome(outcomes []domain.RaffleOutcome, want domain.RaffleOutcome
 		}
 	}
 	return false
-}
-
-type deniedChecker struct{}
-
-func (deniedChecker) IsSubscribed(context.Context, int64, string) (bool, error) {
-	return false, nil
 }
