@@ -13,10 +13,14 @@ type startService interface {
 
 type StartHandler struct {
 	service startService
-	sender  handlers.Sender
+	sender  welcomeSender
 }
 
-func NewStart(service startService, sender handlers.Sender) StartHandler {
+type welcomeSender interface {
+	SendWelcome(ctx context.Context, peerID int64, text string, buttons [][]handlers.Button) error
+}
+
+func NewStart(service startService, sender welcomeSender) StartHandler {
 	return StartHandler{service: service, sender: sender}
 }
 
@@ -28,5 +32,5 @@ func (h StartHandler) Handle(ctx context.Context, userID int64) error {
 	if err := h.service.Start(ctx, userID); err != nil {
 		return err
 	}
-	return h.sender.Send(ctx, userID, welcomeText, handlers.MenuButtons())
+	return h.sender.SendWelcome(ctx, userID, welcomeText, handlers.MenuButtons())
 }

@@ -123,6 +123,10 @@ type vkAction struct {
 }
 
 func (c *Client) Send(ctx context.Context, peerID int64, text string, buttons [][]Button) error {
+	return c.send(ctx, peerID, text, buttons, "")
+}
+
+func (c *Client) send(ctx context.Context, peerID int64, text string, buttons [][]Button, attachment string) error {
 	var randomBytes [4]byte
 	if _, err := rand.Read(randomBytes[:]); err != nil {
 		return fmt.Errorf("create VK message ID: %w", err)
@@ -135,6 +139,9 @@ func (c *Client) Send(ctx context.Context, peerID int64, text string, buttons []
 		"peer_id":   {strconv.FormatInt(peerID, 10)},
 		"random_id": {strconv.FormatUint(uint64(randomID), 10)},
 		"message":   {text},
+	}
+	if attachment != "" {
+		params.Set("attachment", attachment)
 	}
 	if len(buttons) > 0 {
 		keyboard := vkKeyboard{Inline: true}

@@ -24,6 +24,7 @@ type BotService interface {
 
 type Messenger interface {
 	handlers.Sender
+	SendWelcome(ctx context.Context, peerID int64, text string, buttons [][]handlers.Button) error
 	Ack(ctx context.Context, eventID string, userID, peerID int64) error
 }
 

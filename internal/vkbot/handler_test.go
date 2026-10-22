@@ -27,7 +27,7 @@ func TestHandlerRoutesCallbackScenarios(t *testing.T) {
 		{name: "subscription", action: handlers.ActionSubscriptionCheck, wantMessage: "Заявка на розыгрыш призов", wantButtons: 1},
 		{name: "how to participate", action: handlers.ActionHowToParticipate, wantMessage: "Как участвовать", wantButtons: 4},
 		{name: "chances", action: handlers.ActionChances, wantMessage: "3 из 10", wantButtons: 1},
-		{name: "rules", action: handlers.ActionRules, wantMessage: "Раздел пока не реализован", wantButtons: 1},
+		{name: "rules", action: handlers.ActionRules, wantMessage: "Правила акции", wantButtons: 1},
 		{name: "unknown", action: "missing:action", wantMessage: "Неизвестное действие", wantButtons: 1},
 	}
 
@@ -90,6 +90,41 @@ func TestStartCreatesUserOnlyAfterStartMessage(t *testing.T) {
 	}
 	if service.startCalls != 1 {
 		t.Fatalf("Start calls=%d, want 1", service.startCalls)
+	}
+	if messenger.welcomeCalls != 1 {
+		t.Fatalf("welcome calls=%d, want 1", messenger.welcomeCalls)
+	}
+}
+
+func TestInformationSectionsShowCampaignDetails(t *testing.T) {
+	messenger := &recordingMessenger{}
+	handler := NewHandler(&scenarioTestService{}, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, action := range []string{handlers.ActionChances, handlers.ActionRules} {
+		payload, err := json.Marshal(map[string]string{"action": action})
+		if err != nil {
+			t.Fatal(err)
+		}
+		update := Update{Type: "message_event"}
+		update.Object.UserID = 42
+		update.Object.PeerID = 42
+		update.Object.EventID = "event-1"
+		update.Object.Payload = payload
+		if err := handler.Handle(context.Background(), update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(messenger.sent) != 2 {
+		t.Fatalf("messages=%+v", messenger.sent)
+	}
+	for _, fragment := range []string{"Пройдено дней акции: 4 из 10", "Осталось дней (включая сегодня): 6", "20.10.2026 — Демо-партнёр", domain.GrandPrize} {
+		if !strings.Contains(messenger.sent[0].text, fragment) {
+			t.Errorf("chances message does not contain %q: %s", fragment, messenger.sent[0].text)
+		}
+	}
+	for _, fragment := range []string{"Правила акции", "Максимум — 10 шансов", "демонстрационная версия"} {
+		if !strings.Contains(messenger.sent[1].text, fragment) {
+			t.Errorf("rules message does not contain %q: %s", fragment, messenger.sent[1].text)
+		}
 	}
 }
 
@@ -186,7 +221,10 @@ func (s *scenarioTestService) Start(context.Context, int64) error {
 }
 
 func (*scenarioTestService) MyChances(context.Context, int64) (domain.Chances, error) {
-	return domain.Chances{Earned: 3, Maximum: domain.MaxChances}, nil
+	return domain.Chances{
+		Earned: 3, Maximum: domain.MaxChances, PassedDays: 4, RemainingDays: 6,
+		ActiveDays: []domain.ActiveDay{{Date: time.Date(2026, time.October, 20, 0, 0, 0, 0, time.UTC), PartnerName: "Демо-партнёр"}},
+	}, nil
 }
 
 func (s *scenarioTestService) IssuePromo(context.Context, int64) (domain.PromoResult, error) {
@@ -208,13 +246,19 @@ type recordedMessage struct {
 }
 
 type recordingMessenger struct {
-	acked int
-	sent  []recordedMessage
+	acked        int
+	welcomeCalls int
+	sent         []recordedMessage
 }
 
 func (m *recordingMessenger) Send(_ context.Context, peerID int64, text string, buttons [][]Button) error {
 	m.sent = append(m.sent, recordedMessage{peerID: peerID, text: text, buttons: buttons})
 	return nil
+}
+
+func (m *recordingMessenger) SendWelcome(ctx context.Context, peerID int64, text string, buttons [][]Button) error {
+	m.welcomeCalls++
+	return m.Send(ctx, peerID, text, buttons)
 }
 
 func (m *recordingMessenger) Ack(context.Context, string, int64, int64) error {

@@ -136,9 +136,9 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO active_days (user_id, partner_day_id) VALUES ($1, $2)", userID, dayID); err == nil {
 		t.Fatal("same day created a duplicate chance")
 	}
-	count, err := users.ActiveDayCount(ctx, 42)
-	if err != nil || count != 1 {
-		t.Fatalf("active day count=%d, err=%v", count, err)
+	summary, err := users.Chances(ctx, 42)
+	if err != nil || summary.Earned != 1 {
+		t.Fatalf("active day count=%d, err=%v", summary.Earned, err)
 	}
 
 	if _, err := pool.Exec(ctx, "INSERT INTO raffle_entries (user_id, partner_day_id, subscription_checked_at) VALUES ($1, $2, now())", userID, dayID); err != nil {
@@ -172,9 +172,9 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if repeat.Outcome != domain.PromoAlreadyIssued || repeat.Code != first.Code {
 		t.Fatalf("repeat promo result = %+v; first = %+v", repeat, first)
 	}
-	count, err = users.ActiveDayCount(ctx, 42)
-	if err != nil || count != 2 {
-		t.Fatalf("active days after promo=%d, err=%v", count, err)
+	summary, err = users.Chances(ctx, 42)
+	if err != nil || summary.Earned != 2 {
+		t.Fatalf("active days after promo=%d, err=%v", summary.Earned, err)
 	}
 
 	if err := users.EnsureUser(ctx, 43); err != nil {
@@ -266,9 +266,9 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || repeat.Outcome != domain.PromoAlreadyIssued || repeat.Code != first.Code {
 		t.Fatalf("assigned promo after expiry=%+v, err=%v", repeat, err)
 	}
-	count, err = users.ActiveDayCount(ctx, 50)
-	if err != nil || count != 0 {
-		t.Fatalf("active days after expired promo=%d, err=%v", count, err)
+	summary, err = users.Chances(ctx, 50)
+	if err != nil || summary.Earned != 0 {
+		t.Fatalf("active days after expired promo=%d, err=%v", summary.Earned, err)
 	}
 
 	raffles := NewRaffles(pool)
@@ -282,6 +282,12 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 		*Raffles
 	}{users, promos, raffles}
 	bot := service.New(repo, subscription.NewStubChecker())
+	progress, err := bot.MyChances(ctx, 42)
+	if err != nil || progress.Earned != 2 || progress.Maximum != domain.MaxChances ||
+		progress.PassedDays+progress.RemainingDays != 11 || len(progress.ActiveDays) != 2 ||
+		progress.ActiveDays[0].PartnerName == "" || progress.ActiveDays[1].PartnerName != "Partner" {
+		t.Fatalf("chance progress=%+v, err=%v", progress, err)
+	}
 	joined, err := bot.JoinRaffle(ctx, 42)
 	if err != nil || joined.Outcome != domain.RaffleJoined || joined.Chances != 2 {
 		t.Fatalf("raffle after promo=%+v, err=%v", joined, err)
@@ -290,9 +296,9 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || repeatedJoin.Outcome != domain.RaffleAlreadyJoined || repeatedJoin.Chances != 2 {
 		t.Fatalf("repeated raffle=%+v, err=%v", repeatedJoin, err)
 	}
-	count, err = users.ActiveDayCount(ctx, 42)
-	if err != nil || count != 2 {
-		t.Fatalf("active days after promo and raffle=%d, err=%v", count, err)
+	summary, err = users.Chances(ctx, 42)
+	if err != nil || summary.Earned != 2 {
+		t.Fatalf("active days after promo and raffle=%d, err=%v", summary.Earned, err)
 	}
 	joined, err = bot.JoinRaffle(ctx, 47)
 	if err != nil || joined.Outcome != domain.RaffleJoined || joined.Chances != 1 {
@@ -339,9 +345,9 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || notSubscribed.Outcome != domain.RaffleUnsubscribed {
 		t.Fatalf("denied raffle=%+v, err=%v", notSubscribed, err)
 	}
-	count, err = users.ActiveDayCount(ctx, 49)
-	if err != nil || count != 0 {
-		t.Fatalf("active days without subscription=%d, err=%v", count, err)
+	summary, err = users.Chances(ctx, 49)
+	if err != nil || summary.Earned != 0 {
+		t.Fatalf("active days without subscription=%d, err=%v", summary.Earned, err)
 	}
 	repeatedJoin, err = denied.JoinRaffle(ctx, 42)
 	if err != nil || repeatedJoin.Outcome != domain.RaffleAlreadyJoined {

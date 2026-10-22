@@ -10,7 +10,7 @@ import (
 // UserRepository stores users and reads their active days.
 type UserRepository interface {
 	EnsureUser(ctx context.Context, userID int64) error
-	ActiveDayCount(ctx context.Context, userID int64) (int, error)
+	Chances(ctx context.Context, userID int64) (domain.Chances, error)
 }
 
 type UserService struct {
@@ -32,12 +32,13 @@ func (s *UserService) MyChances(ctx context.Context, userID int64) (domain.Chanc
 	if userID <= 0 {
 		return domain.Chances{}, fmt.Errorf("invalid user ID: %d", userID)
 	}
-	count, err := s.users.ActiveDayCount(ctx, userID)
+	chances, err := s.users.Chances(ctx, userID)
 	if err != nil {
 		return domain.Chances{}, err
 	}
-	if count > domain.MaxChances {
-		count = domain.MaxChances
+	if chances.Earned > domain.MaxChances {
+		chances.Earned = domain.MaxChances
 	}
-	return domain.Chances{Earned: count, Maximum: domain.MaxChances}, nil
+	chances.Maximum = domain.MaxChances
+	return chances, nil
 }
