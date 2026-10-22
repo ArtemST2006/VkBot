@@ -177,6 +177,42 @@ func TestPromoCallbackBeforeStart(t *testing.T) {
 	}
 }
 
+func TestPrizeClaimConversation(t *testing.T) {
+	service := &scenarioTestService{claimStatus: domain.ClaimAwaitingName, pendingName: true}
+	messenger := &recordingMessenger{}
+	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	callback := func(action string) {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]string{"action": action})
+		update := Update{Type: "message_event"}
+		update.Object.UserID, update.Object.PeerID, update.Object.EventID, update.Object.Payload = 42, 42, "event", payload
+		if err := handler.Handle(context.Background(), update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	callback("prize:claim:7")
+	if !strings.Contains(messenger.sent[0].text, "имя и фамилию") {
+		t.Fatalf("claim prompt: %q", messenger.sent[0].text)
+	}
+	update := Update{Type: "message_new"}
+	update.Object.Message = &struct {
+		FromID int64  `json:"from_id"`
+		PeerID int64  `json:"peer_id"`
+		Text   string `json:"text"`
+		Out    int    `json:"out"`
+	}{FromID: 42, PeerID: 42, Text: "Иван Иванов"}
+	if err := handler.Handle(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	if service.savedName != "Иван Иванов" || messenger.sent[1].buttons[0][0].Payload != "prize:consent:7" {
+		t.Fatalf("name=%q, consent buttons=%+v", service.savedName, messenger.sent[1].buttons)
+	}
+	callback("prize:consent:7")
+	if !strings.Contains(messenger.sent[2].text, "сохранены") {
+		t.Fatalf("consent: %q", messenger.sent[2].text)
+	}
+}
+
 func TestRaffleCallbackOtherOutcomes(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -213,6 +249,9 @@ type scenarioTestService struct {
 	promoErr     error
 	partner      *domain.PartnerDay
 	raffleResult domain.RaffleResult
+	claimStatus  domain.ClaimStatus
+	pendingName  bool
+	savedName    string
 }
 
 func (s *scenarioTestService) Start(context.Context, int64) error {
@@ -237,6 +276,26 @@ func (s *scenarioTestService) TodayPartner(context.Context) (*domain.PartnerDay,
 
 func (s *scenarioTestService) JoinRaffle(context.Context, int64) (domain.RaffleResult, error) {
 	return s.raffleResult, nil
+}
+
+func (s *scenarioTestService) StartPrizeClaim(context.Context, int64, int64) (domain.ClaimStatus, error) {
+	if s.claimStatus != "" {
+		return s.claimStatus, nil
+	}
+	return domain.ClaimNotWinner, nil
+}
+
+func (s *scenarioTestService) PendingPrizeName(context.Context, int64) (bool, error) {
+	return s.pendingName, nil
+}
+
+func (s *scenarioTestService) SavePrizeName(_ context.Context, _ int64, name string) (int64, domain.ClaimStatus, error) {
+	s.savedName = name
+	return 7, domain.ClaimAwaitingConsent, nil
+}
+
+func (*scenarioTestService) ConsentPrizeClaim(context.Context, int64, int64) (domain.ClaimStatus, error) {
+	return domain.ClaimCompleted, nil
 }
 
 type recordedMessage struct {

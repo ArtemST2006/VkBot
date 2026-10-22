@@ -8,19 +8,9 @@ import (
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Users persists bot users and reads their active campaign days.
-type Users struct {
-	pool *pgxpool.Pool
-}
-
-func NewUsers(pool *pgxpool.Pool) *Users {
-	return &Users{pool: pool}
-}
-
-func (r *Users) EnsureUser(ctx context.Context, userID int64) error {
+func (r *Repository) EnsureUser(ctx context.Context, userID int64) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO users (platform, external_id)
 		VALUES ('vk', $1)
@@ -33,7 +23,7 @@ func (r *Users) EnsureUser(ctx context.Context, userID int64) error {
 	return nil
 }
 
-func (r *Users) Chances(ctx context.Context, userID int64) (domain.Chances, error) {
+func (r *Repository) Chances(ctx context.Context, userID int64) (domain.Chances, error) {
 	var chances domain.Chances
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FILTER (WHERE event_date < (now() AT TIME ZONE 'Europe/Moscow')::date)::integer,

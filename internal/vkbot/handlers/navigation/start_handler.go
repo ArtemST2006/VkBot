@@ -11,26 +11,19 @@ type startService interface {
 	Start(ctx context.Context, userID int64) error
 }
 
-type StartHandler struct {
-	service startService
-	sender  welcomeSender
-}
-
 type welcomeSender interface {
 	SendWelcome(ctx context.Context, peerID int64, text string, buttons [][]handlers.Button) error
 }
 
-func NewStart(service startService, sender welcomeSender) StartHandler {
-	return StartHandler{service: service, sender: sender}
-}
-
-func (StartHandler) Matches(message string) bool {
+func IsStart(message string) bool {
 	return strings.EqualFold(message, "Начать") || strings.EqualFold(message, "Старт") || strings.HasPrefix(message, "/start")
 }
 
-func (h StartHandler) Handle(ctx context.Context, userID int64) error {
-	if err := h.service.Start(ctx, userID); err != nil {
-		return err
+func NewStart(service startService, sender welcomeSender) handlers.Func {
+	return func(ctx context.Context, userID int64) error {
+		if err := service.Start(ctx, userID); err != nil {
+			return err
+		}
+		return sender.SendWelcome(ctx, userID, welcomeText, handlers.MenuButtons())
 	}
-	return h.sender.SendWelcome(ctx, userID, welcomeText, handlers.MenuButtons())
 }

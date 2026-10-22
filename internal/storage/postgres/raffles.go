@@ -8,19 +8,9 @@ import (
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Raffles reads the partner of the day and registers users after verification.
-type Raffles struct {
-	pool *pgxpool.Pool
-}
-
-func NewRaffles(pool *pgxpool.Pool) *Raffles {
-	return &Raffles{pool: pool}
-}
-
-func (r *Raffles) TodayPartner(ctx context.Context) (*domain.PartnerDay, error) {
+func (r *Repository) TodayPartner(ctx context.Context) (*domain.PartnerDay, error) {
 	var partner domain.PartnerDay
 	err := r.pool.QueryRow(ctx, `
 		SELECT d.id, p.slug, p.name, p.account_url, COALESCE(d.prize_name, '')
@@ -37,7 +27,7 @@ func (r *Raffles) TodayPartner(ctx context.Context) (*domain.PartnerDay, error) 
 	return &partner, nil
 }
 
-func (r *Raffles) ExistingRaffle(ctx context.Context, userID, dayID int64) (*domain.RaffleResult, error) {
+func (r *Repository) ExistingRaffle(ctx context.Context, userID, dayID int64) (*domain.RaffleResult, error) {
 	result := domain.RaffleResult{Outcome: domain.RaffleAlreadyJoined}
 	err := r.pool.QueryRow(ctx, `
 		SELECT p.name, (SELECT COUNT(*)::integer FROM active_days WHERE user_id = u.id)
@@ -56,7 +46,7 @@ func (r *Raffles) ExistingRaffle(ctx context.Context, userID, dayID int64) (*dom
 	return &result, nil
 }
 
-func (r *Raffles) RegisterRaffle(ctx context.Context, userID, dayID int64) (domain.RaffleResult, error) {
+func (r *Repository) RegisterRaffle(ctx context.Context, userID, dayID int64) (domain.RaffleResult, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return domain.RaffleResult{}, fmt.Errorf("begin raffle transaction: %w", err)
@@ -95,13 +85,6 @@ func (r *Raffles) RegisterRaffle(ctx context.Context, userID, dayID int64) (doma
 			VALUES ($1, $2, now())
 		`, internalUserID, dayID); err != nil {
 			return domain.RaffleResult{}, fmt.Errorf("register raffle entry: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO active_days (user_id, partner_day_id)
-			VALUES ($1, $2)
-			ON CONFLICT (user_id, partner_day_id) DO NOTHING
-		`, internalUserID, dayID); err != nil {
-			return domain.RaffleResult{}, fmt.Errorf("add active day for raffle: %w", err)
 		}
 		result.Outcome = domain.RaffleJoined
 	} else {

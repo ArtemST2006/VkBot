@@ -123,21 +123,28 @@ type vkAction struct {
 }
 
 func (c *Client) Send(ctx context.Context, peerID int64, text string, buttons [][]Button) error {
-	return c.send(ctx, peerID, text, buttons, "")
+	return c.send(ctx, peerID, text, buttons, "", 0)
 }
 
-func (c *Client) send(ctx context.Context, peerID int64, text string, buttons [][]Button, attachment string) error {
-	var randomBytes [4]byte
-	if _, err := rand.Read(randomBytes[:]); err != nil {
-		return fmt.Errorf("create VK message ID: %w", err)
-	}
-	randomID := binary.BigEndian.Uint32(randomBytes[:]) & 0x7fffffff
+// SendQueued reuses the outbox ID as VK random_id so retries do not duplicate a message.
+func (c *Client) SendQueued(ctx context.Context, peerID int64, text string, buttons [][]Button, outboxID int64) error {
+	return c.send(ctx, peerID, text, buttons, "", outboxID)
+}
+
+func (c *Client) send(ctx context.Context, peerID int64, text string, buttons [][]Button, attachment string, randomID int64) error {
 	if randomID == 0 {
-		randomID = 1
+		var randomBytes [4]byte
+		if _, err := rand.Read(randomBytes[:]); err != nil {
+			return fmt.Errorf("create VK message ID: %w", err)
+		}
+		randomID = int64(binary.BigEndian.Uint32(randomBytes[:]) & 0x7fffffff)
+		if randomID == 0 {
+			randomID = 1
+		}
 	}
 	params := url.Values{
 		"peer_id":   {strconv.FormatInt(peerID, 10)},
-		"random_id": {strconv.FormatUint(uint64(randomID), 10)},
+		"random_id": {strconv.FormatInt(randomID, 10)},
 		"message":   {text},
 	}
 	if attachment != "" {

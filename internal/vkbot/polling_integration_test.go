@@ -220,6 +220,17 @@ func jsonResponse(body string) *http.Response {
 
 type integrationUsers struct{}
 
+func (integrationUsers) StartPrizeClaim(context.Context, int64, int64) (domain.ClaimStatus, error) {
+	return domain.ClaimNotWinner, nil
+}
+func (integrationUsers) PendingPrizeName(context.Context, int64) (bool, error) { return false, nil }
+func (integrationUsers) SavePrizeName(context.Context, int64, string) (int64, domain.ClaimStatus, error) {
+	return 0, domain.ClaimNotWinner, nil
+}
+func (integrationUsers) ConsentPrizeClaim(context.Context, int64, int64) (domain.ClaimStatus, error) {
+	return domain.ClaimNotWinner, nil
+}
+
 func (integrationUsers) EnsureUser(context.Context, int64) error { return nil }
 
 func (integrationUsers) Chances(context.Context, int64) (domain.Chances, error) {

@@ -6,13 +6,15 @@ type Button struct {
 }
 
 const (
-	ActionMenu              = "menu"
-	ActionPromo             = "promo:get"
-	ActionRaffle            = "raffle:join"
-	ActionSubscriptionCheck = "subscription:check"
-	ActionHowToParticipate  = "how:join"
-	ActionChances           = "chances:show"
-	ActionRules             = "rules:show"
+	ActionMenu               = "menu"
+	ActionPromo              = "promo:get"
+	ActionRaffle             = "raffle:join"
+	ActionSubscriptionCheck  = "subscription:check"
+	ActionHowToParticipate   = "how:join"
+	ActionChances            = "chances:show"
+	ActionRules              = "rules:show"
+	ActionPrizeClaimPrefix   = "prize:claim:"
+	ActionPrizeConsentPrefix = "prize:consent:"
 )
 
 func MenuButtons() [][]Button {

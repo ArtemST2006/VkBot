@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -77,7 +78,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	defer pool.Close()
 
 	var migrationsApplied int
-	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM goose_db_version WHERE version_id IN (1, 2) AND is_applied").Scan(&migrationsApplied); err != nil || migrationsApplied != 2 {
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM goose_db_version WHERE version_id IN (1, 2, 3) AND is_applied").Scan(&migrationsApplied); err != nil || migrationsApplied != 3 {
 		t.Fatalf("Goose applied versions=%d, err=%v", migrationsApplied, err)
 	}
 
@@ -107,11 +108,11 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 		t.Fatalf("demo seed: partners=%d, days=%d, available codes=%d", demoPartners, demoDays, demoCodes)
 	}
 
-	users := NewUsers(pool)
-	if err := users.EnsureUser(ctx, 42); err != nil {
+	repo := New(pool)
+	if err := repo.EnsureUser(ctx, 42); err != nil {
 		t.Fatal(err)
 	}
-	if err := users.EnsureUser(ctx, 42); err != nil {
+	if err := repo.EnsureUser(ctx, 42); err != nil {
 		t.Fatal(err)
 	}
 	var userID int64
@@ -130,17 +131,6 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err := pool.QueryRow(ctx, "INSERT INTO partner_days (partner_id, event_date) VALUES ($1, '2035-01-01') RETURNING id", partnerID).Scan(&dayID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "INSERT INTO active_days (user_id, partner_day_id) VALUES ($1, $2)", userID, dayID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, "INSERT INTO active_days (user_id, partner_day_id) VALUES ($1, $2)", userID, dayID); err == nil {
-		t.Fatal("same day created a duplicate chance")
-	}
-	summary, err := users.Chances(ctx, 42)
-	if err != nil || summary.Earned != 1 {
-		t.Fatalf("active day count=%d, err=%v", summary.Earned, err)
-	}
-
 	if _, err := pool.Exec(ctx, "INSERT INTO raffle_entries (user_id, partner_day_id, subscription_checked_at) VALUES ($1, $2, now())", userID, dayID); err != nil {
 		t.Fatal(err)
 	}
@@ -153,31 +143,34 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO promo_codes (partner_day_id, code, assigned_user_id, assigned_at) VALUES ($1, 'B', $2, now())", dayID, userID); err == nil {
 		t.Fatal("same user received two promo codes for one partner day")
 	}
+	summary, err := repo.Chances(ctx, 42)
+	if err != nil || summary.Earned != 1 {
+		t.Fatalf("promo and raffle in one day should give one chance: count=%d, err=%v", summary.Earned, err)
+	}
 
-	promos := NewPromos(pool)
-	if _, err := promos.IssuePromo(ctx, 999); !errors.Is(err, domain.ErrUserNotStarted) {
+	if _, err := repo.IssuePromo(ctx, 999); !errors.Is(err, domain.ErrUserNotStarted) {
 		t.Fatalf("promo for a user who did not press Start: %v", err)
 	}
-	first, err := promos.IssuePromo(ctx, 42)
+	first, err := repo.IssuePromo(ctx, 42)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.Outcome != domain.PromoIssued || first.PartnerName == "" || first.Code == "" || first.Instructions == "" || !first.ValidUntil.After(time.Now()) {
 		t.Fatalf("first promo result = %+v", first)
 	}
-	repeat, err := promos.IssuePromo(ctx, 42)
+	repeat, err := repo.IssuePromo(ctx, 42)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if repeat.Outcome != domain.PromoAlreadyIssued || repeat.Code != first.Code {
 		t.Fatalf("repeat promo result = %+v; first = %+v", repeat, first)
 	}
-	summary, err = users.Chances(ctx, 42)
+	summary, err = repo.Chances(ctx, 42)
 	if err != nil || summary.Earned != 2 {
 		t.Fatalf("active days after promo=%d, err=%v", summary.Earned, err)
 	}
 
-	if err := users.EnsureUser(ctx, 43); err != nil {
+	if err := repo.EnsureUser(ctx, 43); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -187,7 +180,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := promos.IssuePromo(ctx, 43)
+			result, err := repo.IssuePromo(ctx, 43)
 			if err != nil {
 				concurrentErrors <- err
 				return
@@ -213,10 +206,10 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	}
 
 	for _, vkID := range []int64{44, 45, 46, 47} {
-		if err := users.EnsureUser(ctx, vkID); err != nil {
+		if err := repo.EnsureUser(ctx, vkID); err != nil {
 			t.Fatal(err)
 		}
-		result, err := promos.IssuePromo(ctx, vkID)
+		result, err := repo.IssuePromo(ctx, vkID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -255,32 +248,26 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if err := users.EnsureUser(ctx, 50); err != nil {
+	if err := repo.EnsureUser(ctx, 50); err != nil {
 		t.Fatal(err)
 	}
-	expired, err := promos.IssuePromo(ctx, 50)
+	expired, err := repo.IssuePromo(ctx, 50)
 	if err != nil || expired.Outcome != domain.PromoUnavailable {
 		t.Fatalf("expired promo=%+v, err=%v", expired, err)
 	}
-	repeat, err = promos.IssuePromo(ctx, 42)
+	repeat, err = repo.IssuePromo(ctx, 42)
 	if err != nil || repeat.Outcome != domain.PromoAlreadyIssued || repeat.Code != first.Code {
 		t.Fatalf("assigned promo after expiry=%+v, err=%v", repeat, err)
 	}
-	summary, err = users.Chances(ctx, 50)
+	summary, err = repo.Chances(ctx, 50)
 	if err != nil || summary.Earned != 0 {
 		t.Fatalf("active days after expired promo=%d, err=%v", summary.Earned, err)
 	}
 
-	raffles := NewRaffles(pool)
-	partner, err := raffles.TodayPartner(ctx)
+	partner, err := repo.TodayPartner(ctx)
 	if err != nil || partner == nil || partner.Name == "" || partner.AccountURL == "" || partner.PrizeName == "" {
 		t.Fatalf("today's partner=%+v, err=%v", partner, err)
 	}
-	repo := struct {
-		*Users
-		*Promos
-		*Raffles
-	}{users, promos, raffles}
 	bot := service.New(repo, subscription.NewStubChecker())
 	progress, err := bot.MyChances(ctx, 42)
 	if err != nil || progress.Earned != 2 || progress.Maximum != domain.MaxChances ||
@@ -296,7 +283,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || repeatedJoin.Outcome != domain.RaffleAlreadyJoined || repeatedJoin.Chances != 2 {
 		t.Fatalf("repeated raffle=%+v, err=%v", repeatedJoin, err)
 	}
-	summary, err = users.Chances(ctx, 42)
+	summary, err = repo.Chances(ctx, 42)
 	if err != nil || summary.Earned != 2 {
 		t.Fatalf("active days after promo and raffle=%d, err=%v", summary.Earned, err)
 	}
@@ -305,7 +292,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 		t.Fatalf("raffle after exhausted promo=%+v, err=%v", joined, err)
 	}
 
-	if err := users.EnsureUser(ctx, 48); err != nil {
+	if err := repo.EnsureUser(ctx, 48); err != nil {
 		t.Fatal(err)
 	}
 	concurrentRaffles := make(chan domain.RaffleResult, 2)
@@ -337,7 +324,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 		t.Fatalf("concurrent raffle outcomes=%v", raffleOutcomes)
 	}
 
-	if err := users.EnsureUser(ctx, 49); err != nil {
+	if err := repo.EnsureUser(ctx, 49); err != nil {
 		t.Fatal(err)
 	}
 	denied := service.New(repo, deniedChecker{})
@@ -345,13 +332,120 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || notSubscribed.Outcome != domain.RaffleUnsubscribed {
 		t.Fatalf("denied raffle=%+v, err=%v", notSubscribed, err)
 	}
-	summary, err = users.Chances(ctx, 49)
+	summary, err = repo.Chances(ctx, 49)
 	if err != nil || summary.Earned != 0 {
 		t.Fatalf("active days without subscription=%d, err=%v", summary.Earned, err)
 	}
 	repeatedJoin, err = denied.JoinRaffle(ctx, 42)
 	if err != nil || repeatedJoin.Outcome != domain.RaffleAlreadyJoined {
 		t.Fatalf("existing entry after lost subscription=%+v, err=%v", repeatedJoin, err)
+	}
+
+	if _, err := repo.DrawFinal(ctx); err == nil {
+		t.Fatal("final draw started before campaign end")
+	}
+	var yesterday time.Time
+	if err := pool.QueryRow(ctx, `
+		UPDATE partner_days SET event_date = (now() AT TIME ZONE 'Europe/Moscow')::date - 1
+		WHERE id = $1 RETURNING event_date
+	`, partner.ID).Scan(&yesterday); err != nil {
+		t.Fatal(err)
+	}
+	dueDays, finalDue, err := repo.DueDraws(ctx)
+	if err != nil || len(dueDays) != 1 || !dueDays[0].Equal(yesterday) || finalDue {
+		t.Fatalf("due draws: days=%v, final=%v, err=%v", dueDays, finalDue, err)
+	}
+	draw, err := repo.DrawDaily(ctx, yesterday)
+	if err != nil || draw.Tickets != 3 || draw.Winners != 2 || draw.Reserves != 1 {
+		t.Fatalf("daily draw=%+v, err=%v", draw, err)
+	}
+	if _, err := repo.DrawDaily(ctx, yesterday); err == nil {
+		t.Fatal("same daily draw was created twice")
+	}
+	dueDays, finalDue, err = repo.DueDraws(ctx)
+	if err != nil || len(dueDays) != 0 || finalDue {
+		t.Fatalf("drawn day is still due: days=%v, final=%v, err=%v", dueDays, finalDue, err)
+	}
+	var active, reserve, queued int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FILTER (WHERE state = 'active'),
+		COUNT(*) FILTER (WHERE state = 'waiting') FROM draw_results WHERE draw_id = $1`, draw.ID).Scan(&active, &reserve); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE draw_id = $1`, draw.ID).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if active != draw.Winners || reserve != draw.Reserves || queued != draw.Winners {
+		t.Fatalf("draw results: active=%d, reserve=%d, queued=%d", active, reserve, queued)
+	}
+	firstNotice, err := repo.NextNotification(ctx)
+	if err != nil || firstNotice == nil {
+		t.Fatalf("first winner notification=%+v, err=%v", firstNotice, err)
+	}
+	if err := repo.MarkNotificationSent(ctx, *firstNotice); err != nil {
+		t.Fatal(err)
+	}
+	status, err := bot.StartPrizeClaim(ctx, draw.ID, firstNotice.UserID)
+	if err != nil || status != domain.ClaimAwaitingName {
+		t.Fatalf("start prize claim=%s, err=%v", status, err)
+	}
+	if _, _, err := bot.SavePrizeName(ctx, firstNotice.UserID, "Иван"); !errors.Is(err, domain.ErrInvalidFullName) {
+		t.Fatalf("invalid name error=%v", err)
+	}
+	claimDraw, status, err := bot.SavePrizeName(ctx, firstNotice.UserID, "Иван Иванов")
+	if err != nil || claimDraw != draw.ID || status != domain.ClaimAwaitingConsent {
+		t.Fatalf("save name draw=%d, status=%s, err=%v", claimDraw, status, err)
+	}
+	status, err = bot.ConsentPrizeClaim(ctx, draw.ID, firstNotice.UserID)
+	if err != nil || status != domain.ClaimCompleted {
+		t.Fatalf("consent status=%s, err=%v", status, err)
+	}
+	var savedName string
+	if err := pool.QueryRow(ctx, `SELECT full_name FROM draw_results AS res
+		JOIN users AS u ON u.id = res.user_id
+		WHERE res.draw_id = $1 AND u.platform = 'vk' AND u.external_id = $2`,
+		draw.ID, strconv.FormatInt(firstNotice.UserID, 10)).Scan(&savedName); err != nil || savedName != "Иван Иванов" {
+		t.Fatalf("saved prize name=%q, err=%v", savedName, err)
+	}
+	secondNotice, err := repo.NextNotification(ctx)
+	if err != nil || secondNotice == nil || secondNotice.UserID == firstNotice.UserID {
+		t.Fatalf("second winner notification=%+v, err=%v", secondNotice, err)
+	}
+	if err := repo.MarkNotificationSent(ctx, *secondNotice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE draw_results SET response_deadline = now() - interval '1 second'
+		WHERE draw_id = $1 AND user_id = (SELECT id FROM users WHERE external_id = $2 AND platform = 'vk')
+	`, draw.ID, strconv.FormatInt(secondNotice.UserID, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ExpirePrizes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reserveNotice, err := repo.NextNotification(ctx)
+	if err != nil || reserveNotice == nil || reserveNotice.UserID == secondNotice.UserID {
+		t.Fatalf("reserve notification=%+v, err=%v", reserveNotice, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE partner_days SET event_date = '2020-01-01' WHERE id = $1`, dayID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE partner_days SET event_date = event_date - 30 WHERE id <> $1 AND id <> $2`, partner.ID, dayID); err != nil {
+		t.Fatal(err)
+	}
+	_, finalDue, err = repo.DueDraws(ctx)
+	if err != nil || !finalDue {
+		t.Fatalf("final draw should be due: due=%v, err=%v", finalDue, err)
+	}
+	final, err := repo.DrawFinal(ctx)
+	if err != nil || final.Tickets == 0 || final.Winners == 0 {
+		t.Fatalf("final draw=%+v, err=%v", final, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE draw_id = $1`, final.ID).Scan(&queued); err != nil || queued != final.Winners {
+		t.Fatalf("final notifications=%d, winners=%d, err=%v", queued, final.Winners, err)
+	}
+	_, finalDue, err = repo.DueDraws(ctx)
+	if err != nil || finalDue {
+		t.Fatalf("final draw is still due: due=%v, err=%v", finalDue, err)
 	}
 }
 
