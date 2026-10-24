@@ -10,6 +10,7 @@ import (
 	"github.com/ArtemST2006/VkBot/internal/domain"
 	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers"
+	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/admin"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/navigation"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/participation"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers/prize"
@@ -19,6 +20,7 @@ import (
 
 type BotService interface {
 	prize.Service
+	admin.StatsService
 	Start(ctx context.Context, userID int64) error
 	MyChances(ctx context.Context, userID int64) (domain.Chances, error)
 	IssuePromo(ctx context.Context, userID int64) (domain.PromoResult, error)
@@ -40,9 +42,11 @@ type Handler struct {
 	service        BotService
 	messenger      Messenger
 	log            *slog.Logger
+	adminID        int64
+	stats          handlers.Func
 }
 
-func NewHandler(service BotService, messenger Messenger, log *slog.Logger) *Handler {
+func NewHandler(service BotService, messenger Messenger, log *slog.Logger, adminID int64) *Handler {
 	return &Handler{
 		start:          withHandlerLog(log, "navigation.start", navigation.NewStart(service, messenger)),
 		messageUnknown: withHandlerLog(log, "navigation.unknown_message", navigation.NewUnknownMessage(messenger)),
@@ -58,6 +62,8 @@ func NewHandler(service BotService, messenger Messenger, log *slog.Logger) *Hand
 		messenger: messenger,
 		service:   service,
 		log:       log,
+		adminID:   adminID,
+		stats:     withHandlerLog(log, "admin.stats", admin.NewStats(service, messenger)),
 	}
 }
 
@@ -85,6 +91,12 @@ func (h *Handler) handleMessage(ctx context.Context, update Update, userID, peer
 	message := strings.TrimSpace(update.Object.Message.Text)
 	if navigation.IsStart(message) {
 		return h.start(ctx, userID)
+	}
+	if message == "/stats" {
+		if h.adminID > 0 && userID == h.adminID {
+			return h.stats(ctx, userID)
+		}
+		return h.messageUnknown(ctx, userID)
 	}
 	pending, err := h.service.PendingPrizeName(ctx, userID)
 	if err != nil {

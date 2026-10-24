@@ -18,6 +18,7 @@ type Repository interface {
 	TodayPartner(ctx context.Context) (*domain.PartnerDay, error)
 	ExistingRaffle(ctx context.Context, userID, dayID int64) (*domain.RaffleResult, error)
 	RegisterRaffle(ctx context.Context, userID, dayID int64) (domain.RaffleResult, error)
+	Stats(ctx context.Context) (domain.Stats, error)
 	StartPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error)
 	PendingPrizeName(ctx context.Context, userID int64) (bool, error)
 	SavePrizeName(ctx context.Context, userID int64, fullName string) (int64, domain.ClaimStatus, error)
@@ -37,6 +38,10 @@ func (s *Service) Start(ctx context.Context, userID int64) error {
 		return fmt.Errorf("invalid user ID: %d", userID)
 	}
 	return s.repo.EnsureUser(ctx, userID)
+}
+
+func (s *Service) Stats(ctx context.Context) (domain.Stats, error) {
+	return s.repo.Stats(ctx)
 }
 
 func (s *Service) MyChances(ctx context.Context, userID int64) (domain.Chances, error) {

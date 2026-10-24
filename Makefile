@@ -4,7 +4,7 @@ GOOSE ?= goose
 GOOSE_DIR ?= migrations
 
 -include .env
-export VK_GROUP_TOKEN VK_GROUP_ID DATABASE_URL
+export VK_GROUP_TOKEN VK_GROUP_ID VK_ADMIN_ID DATABASE_URL
 
 .PHONY: build run migrate migrate-down migrate-status migrate-create format check test
 

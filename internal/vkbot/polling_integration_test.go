@@ -133,7 +133,7 @@ func TestPollingRoutesMessagesAndButtons(t *testing.T) {
 	client := NewClient("test-token", 123, "https://vk.test/method", &http.Client{Transport: transport})
 	services := service.New(integrationUsers{})
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(services, client, log)
+	handler := NewHandler(services, client, log, 0)
 	if err := RunPolling(ctx, client, handler); !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunPolling() error = %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPollingRefreshesExpiredState(t *testing.T) {
 		}
 	})
 	client := NewClient("test-token", 123, "https://vk.test/method", &http.Client{Transport: transport})
-	handler := NewHandler(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewHandler(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 	if err := RunPolling(ctx, client, handler); !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunPolling() error = %v", err)
 	}
@@ -218,6 +218,8 @@ func jsonResponse(body string) *http.Response {
 }
 
 type integrationUsers struct{}
+
+func (integrationUsers) Stats(context.Context) (domain.Stats, error) { return domain.Stats{}, nil }
 
 func (integrationUsers) StartPrizeClaim(context.Context, int64, int64) (domain.ClaimStatus, error) {
 	return domain.ClaimNotWinner, nil

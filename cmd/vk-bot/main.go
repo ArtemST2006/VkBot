@@ -35,6 +35,13 @@ func run(log *slog.Logger) error {
 	if err != nil || groupID <= 0 {
 		return errors.New("VK_GROUP_ID must be a positive number")
 	}
+	var adminID int64
+	if raw := os.Getenv("VK_ADMIN_ID"); raw != "" {
+		adminID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || adminID <= 0 {
+			return errors.New("VK_ADMIN_ID must be a positive number")
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -57,7 +64,7 @@ func run(log *slog.Logger) error {
 	client := vkbot.NewClient(token, groupID, "", nil)
 	repo := postgres.New(pool)
 	svc := service.New(repo)
-	handler := vkbot.NewHandler(svc, client, log)
+	handler := vkbot.NewHandler(svc, client, log, adminID)
 	go vkbot.RunNotifications(ctx, repo, client, log)
 	go service.RunDrawScheduler(ctx, repo, log)
 
