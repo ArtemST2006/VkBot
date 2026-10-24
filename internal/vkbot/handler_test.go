@@ -40,7 +40,7 @@ func TestHandlerRoutesCallbackScenarios(t *testing.T) {
 			}, partner: &domain.PartnerDay{Name: "Демо-партнёр", AccountURL: "https://example.com/partner", PrizeName: "Тестовый приз"},
 				raffleResult: domain.RaffleResult{Outcome: domain.RaffleJoined, PartnerName: "Демо-партнёр", PrizeName: "Тестовый приз", AccountURL: "https://example.com/partner", Chances: 1}}
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
-			handler := NewHandler(service, messenger, log)
+			handler := NewHandler(service, messenger, log, 0)
 			payload, err := json.Marshal(struct {
 				Action string `json:"action"`
 			}{Action: tt.action})
@@ -70,7 +70,7 @@ func TestStartCreatesUserOnlyAfterStartMessage(t *testing.T) {
 	service := &scenarioTestService{}
 	messenger := &recordingMessenger{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(service, messenger, log)
+	handler := NewHandler(service, messenger, log, 0)
 
 	var update Update
 	if err := json.Unmarshal([]byte(`{"type":"message_new","object":{"message":{"from_id":42,"peer_id":42,"text":"Привет"}}}`), &update); err != nil {
@@ -97,7 +97,7 @@ func TestStartCreatesUserOnlyAfterStartMessage(t *testing.T) {
 
 func TestInformationSectionsShowCampaignDetails(t *testing.T) {
 	messenger := &recordingMessenger{}
-	handler := NewHandler(&scenarioTestService{}, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewHandler(&scenarioTestService{}, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 	for _, action := range []string{handlers.ActionChances, handlers.ActionRules} {
 		payload, err := json.Marshal(map[string]string{"action": action})
 		if err != nil {
@@ -144,7 +144,7 @@ func TestPromoCallbackOtherOutcomes(t *testing.T) {
 				ValidUntil: time.Date(2026, time.October, 20, 20, 59, 0, 0, time.UTC),
 			}}
 			messenger := &recordingMessenger{}
-			handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			var update Update
 			if err := json.Unmarshal([]byte(`{"type":"message_event","object":{"user_id":42,"peer_id":42,"event_id":"event-1","payload":{"action":"promo:get"}}}`), &update); err != nil {
 				t.Fatal(err)
@@ -163,7 +163,7 @@ func TestPromoCallbackOtherOutcomes(t *testing.T) {
 func TestPromoCallbackBeforeStart(t *testing.T) {
 	service := &scenarioTestService{promoErr: domain.ErrUserNotStarted}
 	messenger := &recordingMessenger{}
-	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 	var update Update
 	if err := json.Unmarshal([]byte(`{"type":"message_event","object":{"user_id":42,"peer_id":42,"event_id":"event-1","payload":{"action":"promo:get"}}}`), &update); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestPromoCallbackBeforeStart(t *testing.T) {
 func TestPrizeClaimConversation(t *testing.T) {
 	service := &scenarioTestService{claimStatus: domain.ClaimAwaitingName, pendingName: true}
 	messenger := &recordingMessenger{}
-	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 	callback := func(action string) {
 		t.Helper()
 		payload, _ := json.Marshal(map[string]string{"action": action})
@@ -225,7 +225,7 @@ func TestRaffleCallbackOtherOutcomes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			service := &scenarioTestService{raffleResult: tt.result}
 			messenger := &recordingMessenger{}
-			handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 0)
 			var update Update
 			if err := json.Unmarshal([]byte(`{"type":"message_event","object":{"user_id":42,"peer_id":42,"event_id":"event-1","payload":{"action":"raffle:join"}}}`), &update); err != nil {
 				t.Fatal(err)
@@ -241,8 +241,60 @@ func TestRaffleCallbackOtherOutcomes(t *testing.T) {
 	}
 }
 
+func TestStatsCommandOnlyForConfiguredAdmin(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		adminID    int64
+		userID     int64
+		peerID     int64
+		wantStats  bool
+		wantNotice string
+	}{
+		{name: "admin", adminID: 42, userID: 42, peerID: 42, wantStats: true, wantNotice: "Запросы промокода: 3"},
+		{name: "other user", adminID: 42, userID: 43, peerID: 43, wantNotice: "Используй кнопки меню"},
+		{name: "disabled", userID: 42, peerID: 42, wantNotice: "Используй кнопки меню"},
+		{name: "group chat", adminID: 42, userID: 42, peerID: 100000042, wantNotice: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &scenarioTestService{}
+			messenger := &recordingMessenger{}
+			handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), tt.adminID)
+			update := Update{Type: "message_new"}
+			update.Object.Message = &struct {
+				FromID int64  `json:"from_id"`
+				PeerID int64  `json:"peer_id"`
+				Text   string `json:"text"`
+				Out    int    `json:"out"`
+			}{FromID: tt.userID, PeerID: tt.peerID, Text: "/stats"}
+			if err := handler.Handle(context.Background(), update); err != nil {
+				t.Fatal(err)
+			}
+			if (service.statsCalls == 1) != tt.wantStats {
+				t.Fatalf("stats calls = %d", service.statsCalls)
+			}
+			if tt.wantNotice == "" {
+				if len(messenger.sent) != 0 {
+					t.Fatalf("unexpected messages: %+v", messenger.sent)
+				}
+				return
+			}
+			if len(messenger.sent) != 1 || !strings.Contains(messenger.sent[0].text, tt.wantNotice) {
+				t.Fatalf("messages: %+v", messenger.sent)
+			}
+			if tt.wantStats {
+				for _, fragment := range []string{"Запустили бота: 2", "Выдано промокодов: 1", "24.10: 2", "Кофейня: промокодов осталось 4, участников розыгрыша 1"} {
+					if !strings.Contains(messenger.sent[0].text, fragment) {
+						t.Errorf("stats message missing %q: %s", fragment, messenger.sent[0].text)
+					}
+				}
+			}
+		})
+	}
+}
+
 type scenarioTestService struct {
 	startCalls   int
+	statsCalls   int
 	promoResult  domain.PromoResult
 	promoErr     error
 	partner      *domain.PartnerDay
@@ -250,6 +302,15 @@ type scenarioTestService struct {
 	claimStatus  domain.ClaimStatus
 	pendingName  bool
 	savedName    string
+}
+
+func (s *scenarioTestService) Stats(context.Context) (domain.Stats, error) {
+	s.statsCalls++
+	return domain.Stats{
+		UsersStarted: 2, PromoRequests: 3, PromosIssued: 1,
+		NewUsers: []domain.DailyUsers{{Date: time.Date(2026, time.October, 24, 0, 0, 0, 0, time.UTC), Count: 2}},
+		Partners: []domain.PartnerStats{{Date: time.Date(2026, time.October, 24, 0, 0, 0, 0, time.UTC), PartnerName: "Кофейня", PromosLeft: 4, RaffleEntrants: 1}},
+	}, nil
 }
 
 func (s *scenarioTestService) Start(context.Context, int64) error {

@@ -164,6 +164,14 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if repeat.Outcome != domain.PromoAlreadyIssued || repeat.Code != first.Code {
 		t.Fatalf("repeat promo result = %+v; first = %+v", repeat, first)
 	}
+	stats, err := repo.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.UsersStarted != 1 || stats.PromoRequests != 2 || stats.PromosIssued != 2 ||
+		len(stats.Partners) != 11 || len(stats.NewUsers) != 11 || stats.Partners[0].PromosLeft != 4 {
+		t.Fatalf("unexpected campaign stats: %+v", stats)
+	}
 	summary, err = repo.Chances(ctx, 42)
 	if err != nil || summary.Earned != 2 {
 		t.Fatalf("active days after promo=%d, err=%v", summary.Earned, err)
