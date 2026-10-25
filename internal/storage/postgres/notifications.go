@@ -11,8 +11,11 @@ import (
 func (r *Repository) NextNotification(ctx context.Context) (*domain.Notification, error) {
 	var item domain.Notification
 	err := r.pool.QueryRow(ctx, `SELECT o.id, u.external_id::bigint, o.attempts, o.message, COALESCE(o.button_action, '')
-		FROM notification_outbox AS o JOIN users AS u ON u.id = o.user_id
-		WHERE o.status = 'pending' AND o.next_attempt_at <= now() AND u.platform = 'vk'
+		FROM notification_outbox AS o
+		JOIN users AS u ON u.id = o.user_id
+		JOIN draws AS d ON d.id = o.draw_id
+		WHERE o.status = 'pending' AND o.next_attempt_at <= now()
+		  AND u.platform = 'vk' AND d.approved_at IS NOT NULL
         ORDER BY o.id LIMIT 1`).Scan(&item.ID, &item.UserID, &item.Attempts, &item.Message, &item.Action)
 	if err == pgx.ErrNoRows {
 		return nil, nil

@@ -19,6 +19,8 @@ type Repository interface {
 	ExistingRaffle(ctx context.Context, userID, dayID int64) (*domain.RaffleResult, error)
 	RegisterRaffle(ctx context.Context, userID, dayID int64) (domain.RaffleResult, error)
 	Stats(ctx context.Context) (domain.Stats, error)
+	PendingDraws(ctx context.Context) ([]domain.PendingDraw, error)
+	ApproveDraw(ctx context.Context, drawID, adminVKID int64) (domain.ApprovalOutcome, error)
 	StartPrizeClaim(ctx context.Context, drawID, userID int64) (domain.ClaimStatus, error)
 	PendingPrizeName(ctx context.Context, userID int64) (bool, error)
 	SavePrizeName(ctx context.Context, userID int64, fullName string) (int64, domain.ClaimStatus, error)
@@ -42,6 +44,17 @@ func (s *Service) Start(ctx context.Context, userID int64) error {
 
 func (s *Service) Stats(ctx context.Context) (domain.Stats, error) {
 	return s.repo.Stats(ctx)
+}
+
+func (s *Service) PendingDraws(ctx context.Context) ([]domain.PendingDraw, error) {
+	return s.repo.PendingDraws(ctx)
+}
+
+func (s *Service) ApproveDraw(ctx context.Context, drawID, adminVKID int64) (domain.ApprovalOutcome, error) {
+	if drawID <= 0 || adminVKID <= 0 {
+		return "", fmt.Errorf("invalid draw or admin ID")
+	}
+	return s.repo.ApproveDraw(ctx, drawID, adminVKID)
 }
 
 func (s *Service) MyChances(ctx context.Context, userID int64) (domain.Chances, error) {

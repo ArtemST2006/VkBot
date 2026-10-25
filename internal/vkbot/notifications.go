@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
+	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 	"github.com/ArtemST2006/VkBot/internal/vkbot/handlers"
 )
 
@@ -20,11 +21,11 @@ type NotificationStore interface {
 func RunNotifications(ctx context.Context, store NotificationStore, client *Client, log *slog.Logger) {
 	for ctx.Err() == nil {
 		if err := store.ExpirePrizes(ctx); err != nil && ctx.Err() == nil {
-			log.WarnContext(ctx, "expire prizes", "error", err)
+			log.WarnContext(ctx, "expire prizes", logger.Err(err))
 		}
 		item, err := store.NextNotification(ctx)
 		if err != nil && ctx.Err() == nil {
-			log.WarnContext(ctx, "read notification queue", "error", err)
+			log.WarnContext(ctx, "read notification queue", logger.Err(err))
 		}
 		if item != nil {
 			var buttons [][]handlers.Button
@@ -33,13 +34,13 @@ func RunNotifications(ctx context.Context, store NotificationStore, client *Clie
 			}
 			if err := client.SendQueued(ctx, item.UserID, item.Message, buttons, item.ID); err != nil {
 				if ctx.Err() == nil {
-					log.WarnContext(ctx, "send notification", "id", item.ID, "error", err)
+					log.WarnContext(ctx, "send notification", "id", item.ID, logger.Err(err))
 					if markErr := store.MarkNotificationFailed(ctx, *item); markErr != nil {
-						log.WarnContext(ctx, "save notification failure", "id", item.ID, "error", markErr)
+						log.WarnContext(ctx, "save notification failure", "id", item.ID, logger.Err(markErr))
 					}
 				}
 			} else if err := store.MarkNotificationSent(ctx, *item); err != nil && ctx.Err() == nil {
-				log.WarnContext(ctx, "mark notification sent", "id", item.ID, "error", err)
+				log.WarnContext(ctx, "mark notification sent", "id", item.ID, logger.Err(err))
 			}
 		}
 		select {

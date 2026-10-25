@@ -35,12 +35,9 @@ func run(log *slog.Logger) error {
 	if err != nil || groupID <= 0 {
 		return errors.New("VK_GROUP_ID must be a positive number")
 	}
-	var adminID int64
-	if raw := os.Getenv("VK_ADMIN_ID"); raw != "" {
-		adminID, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || adminID <= 0 {
-			return errors.New("VK_ADMIN_ID must be a positive number")
-		}
+	adminID, err := strconv.ParseInt(os.Getenv("VK_ADMIN_ID"), 10, 64)
+	if err != nil || adminID <= 0 {
+		return errors.New("VK_ADMIN_ID must be a positive number for draw approval")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -21,6 +21,7 @@ import (
 type BotService interface {
 	prize.Service
 	admin.StatsService
+	admin.DrawsService
 	Start(ctx context.Context, userID int64) error
 	MyChances(ctx context.Context, userID int64) (domain.Chances, error)
 	IssuePromo(ctx context.Context, userID int64) (domain.PromoResult, error)
@@ -30,6 +31,7 @@ type BotService interface {
 type Messenger interface {
 	handlers.Sender
 	SendWelcome(ctx context.Context, peerID int64, text string, buttons [][]handlers.Button) error
+	SendDocument(ctx context.Context, peerID int64, filename string, contents []byte) error
 	Ack(ctx context.Context, eventID string, userID, peerID int64) error
 }
 
@@ -44,6 +46,8 @@ type Handler struct {
 	log            *slog.Logger
 	adminID        int64
 	stats          handlers.Func
+	exportStats    handlers.Func
+	pendingDraws   handlers.Func
 }
 
 func NewHandler(service BotService, messenger Messenger, log *slog.Logger, adminID int64) *Handler {
@@ -59,11 +63,13 @@ func NewHandler(service BotService, messenger Messenger, log *slog.Logger, admin
 			handlers.ActionChances:          withHandlerLog(log, "participation.chances", participation.NewChances(service, messenger)),
 			handlers.ActionRules:            withHandlerLog(log, "rules.show", rules.NewRules(messenger)),
 		},
-		messenger: messenger,
-		service:   service,
-		log:       log,
-		adminID:   adminID,
-		stats:     withHandlerLog(log, "admin.stats", admin.NewStats(service, messenger)),
+		messenger:    messenger,
+		service:      service,
+		log:          log,
+		adminID:      adminID,
+		stats:        withHandlerLog(log, "admin.stats", admin.NewStats(service, messenger)),
+		exportStats:  withHandlerLog(log, "admin.export_stats", admin.NewExportStats(service, messenger)),
+		pendingDraws: withHandlerLog(log, "admin.draws", admin.NewPendingDraws(service, messenger)),
 	}
 }
 
@@ -98,6 +104,18 @@ func (h *Handler) handleMessage(ctx context.Context, update Update, userID, peer
 		}
 		return h.messageUnknown(ctx, userID)
 	}
+	if message == "/export" {
+		if h.adminID > 0 && userID == h.adminID {
+			return h.exportStats(ctx, userID)
+		}
+		return h.messageUnknown(ctx, userID)
+	}
+	if message == "/draws" {
+		if h.adminID > 0 && userID == h.adminID {
+			return h.pendingDraws(ctx, userID)
+		}
+		return h.messageUnknown(ctx, userID)
+	}
 	pending, err := h.service.PendingPrizeName(ctx, userID)
 	if err != nil {
 		return err
@@ -119,6 +137,15 @@ func (h *Handler) handleCallback(ctx context.Context, update Update, userID, pee
 		return err
 	}
 	action := update.Action()
+	if strings.HasPrefix(action, handlers.ActionDrawApprovePrefix) {
+		if h.adminID <= 0 || userID != h.adminID {
+			return h.actionUnknown(ctx, userID)
+		}
+		if drawID, err := strconv.ParseInt(strings.TrimPrefix(action, handlers.ActionDrawApprovePrefix), 10, 64); err == nil && drawID > 0 {
+			return withHandlerLog(h.log, "admin.approve_draw", admin.NewApproveDraw(h.service, h.messenger, drawID))(ctx, userID)
+		}
+		return h.actionUnknown(ctx, userID)
+	}
 	if handler, ok := h.actions[action]; ok {
 		return handler(ctx, userID)
 	}

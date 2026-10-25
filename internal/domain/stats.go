@@ -9,6 +9,7 @@ type Stats struct {
 	PromosIssued  int64
 	NewUsers      []DailyUsers
 	Partners      []PartnerStats
+	Draws         []DrawStats
 }
 
 type DailyUsers struct {
@@ -19,6 +20,21 @@ type DailyUsers struct {
 type PartnerStats struct {
 	Date           time.Time
 	PartnerName    string
+	PromoRequests  int64
+	PromosIssued   int64
 	PromosLeft     int64
 	RaffleEntrants int64
+}
+
+type DrawStats struct {
+	ID           int64
+	Kind         string
+	Date         time.Time
+	DrawnAt      time.Time
+	PartnerName  string
+	Tickets      int64
+	Participants int64
+	Winners      int64
+	Reserves     int64
+	Approved     bool
 }

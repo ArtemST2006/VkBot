@@ -219,7 +219,11 @@ func jsonResponse(body string) *http.Response {
 
 type integrationUsers struct{}
 
-func (integrationUsers) Stats(context.Context) (domain.Stats, error) { return domain.Stats{}, nil }
+func (integrationUsers) Stats(context.Context) (domain.Stats, error)                { return domain.Stats{}, nil }
+func (integrationUsers) PendingDraws(context.Context) ([]domain.PendingDraw, error) { return nil, nil }
+func (integrationUsers) ApproveDraw(context.Context, int64, int64) (domain.ApprovalOutcome, error) {
+	return domain.DrawNotFound, nil
+}
 
 func (integrationUsers) StartPrizeClaim(context.Context, int64, int64) (domain.ClaimStatus, error) {
 	return domain.ClaimNotWinner, nil

@@ -14,6 +14,7 @@ const (
 	ActionRules              = "rules:show"
 	ActionPrizeClaimPrefix   = "prize:claim:"
 	ActionPrizeConsentPrefix = "prize:consent:"
+	ActionDrawApprovePrefix  = "draw:approve:"
 )
 
 func MenuButtons() [][]Button {

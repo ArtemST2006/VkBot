@@ -292,9 +292,108 @@ func TestStatsCommandOnlyForConfiguredAdmin(t *testing.T) {
 	}
 }
 
+func TestExportStatsOnlyForConfiguredAdmin(t *testing.T) {
+	service := &scenarioTestService{}
+	messenger := &recordingMessenger{}
+	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 42)
+	for _, tc := range []struct {
+		userID int64
+		peerID int64
+	}{
+		{userID: 43, peerID: 43},
+		{userID: 42, peerID: 2000000042},
+	} {
+		update := Update{Type: "message_new"}
+		update.Object.Message = &struct {
+			FromID int64  `json:"from_id"`
+			PeerID int64  `json:"peer_id"`
+			Text   string `json:"text"`
+			Out    int    `json:"out"`
+		}{FromID: tc.userID, PeerID: tc.peerID, Text: "/export"}
+		if err := handler.Handle(context.Background(), update); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if service.statsCalls != 0 || len(messenger.documents) != 0 {
+		t.Fatalf("unauthorized export: stats calls=%d, files=%d", service.statsCalls, len(messenger.documents))
+	}
+	update := Update{Type: "message_new"}
+	update.Object.Message = &struct {
+		FromID int64  `json:"from_id"`
+		PeerID int64  `json:"peer_id"`
+		Text   string `json:"text"`
+		Out    int    `json:"out"`
+	}{FromID: 42, PeerID: 42, Text: "/export"}
+	if err := handler.Handle(context.Background(), update); err != nil {
+		t.Fatal(err)
+	}
+	if service.statsCalls != 1 || len(messenger.documents) != 2 || messenger.documents[0].peerID != 42 ||
+		!strings.HasPrefix(messenger.documents[0].filename, "stats_") ||
+		!strings.Contains(string(messenger.documents[0].contents), "Кофейня") ||
+		!strings.HasPrefix(messenger.documents[1].filename, "draws_") ||
+		!strings.Contains(string(messenger.documents[1].contents), "Кофейня") {
+		t.Fatalf("admin export: stats calls=%d, files=%+v", service.statsCalls, messenger.documents)
+	}
+}
+
+func TestDrawApprovalOnlyForConfiguredAdmin(t *testing.T) {
+	service := &scenarioTestService{}
+	messenger := &recordingMessenger{}
+	handler := NewHandler(service, messenger, slog.New(slog.NewTextHandler(io.Discard, nil)), 42)
+
+	message := func(userID int64) Update {
+		update := Update{Type: "message_new"}
+		update.Object.Message = &struct {
+			FromID int64  `json:"from_id"`
+			PeerID int64  `json:"peer_id"`
+			Text   string `json:"text"`
+			Out    int    `json:"out"`
+		}{FromID: userID, PeerID: userID, Text: "/draws"}
+		return update
+	}
+	callback := func(userID int64) Update {
+		payload, err := json.Marshal(map[string]string{"action": handlers.ActionDrawApprovePrefix + "7"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		update := Update{Type: "message_event"}
+		update.Object.UserID, update.Object.PeerID, update.Object.EventID, update.Object.Payload = userID, userID, "event", payload
+		return update
+	}
+
+	if err := handler.Handle(context.Background(), message(43)); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(context.Background(), callback(43)); err != nil {
+		t.Fatal(err)
+	}
+	if service.pendingCalls != 0 || service.approveCalls != 0 {
+		t.Fatalf("other user accessed draws: pending=%d, approve=%d", service.pendingCalls, service.approveCalls)
+	}
+	if err := handler.Handle(context.Background(), message(42)); err != nil {
+		t.Fatal(err)
+	}
+	if service.pendingCalls != 1 || len(messenger.sent) != 3 ||
+		!strings.Contains(messenger.sent[2].text, "Победители (VK ID): 42") ||
+		messenger.sent[2].buttons[0][0].Payload != handlers.ActionDrawApprovePrefix+"7" {
+		t.Fatalf("pending draw messages=%+v", messenger.sent)
+	}
+	if err := handler.Handle(context.Background(), callback(42)); err != nil {
+		t.Fatal(err)
+	}
+	if service.approveCalls != 1 || service.approveID != 7 || service.approveAdmin != 42 ||
+		!strings.Contains(messenger.sent[3].text, "подтверждён") {
+		t.Fatalf("approval=%d/%d/%d, messages=%+v", service.approveCalls, service.approveID, service.approveAdmin, messenger.sent)
+	}
+}
+
 type scenarioTestService struct {
 	startCalls   int
 	statsCalls   int
+	pendingCalls int
+	approveCalls int
+	approveID    int64
+	approveAdmin int64
 	promoResult  domain.PromoResult
 	promoErr     error
 	partner      *domain.PartnerDay
@@ -304,12 +403,27 @@ type scenarioTestService struct {
 	savedName    string
 }
 
+func (s *scenarioTestService) PendingDraws(context.Context) ([]domain.PendingDraw, error) {
+	s.pendingCalls++
+	return []domain.PendingDraw{{ID: 7, Kind: "daily", Date: "24.10.2026", PartnerName: "Кофейня", Tickets: 3, WinnerIDs: "42", ReserveIDs: "43"}}, nil
+}
+
+func (s *scenarioTestService) ApproveDraw(_ context.Context, drawID, adminID int64) (domain.ApprovalOutcome, error) {
+	s.approveCalls++
+	s.approveID = drawID
+	s.approveAdmin = adminID
+	return domain.DrawApproved, nil
+}
+
 func (s *scenarioTestService) Stats(context.Context) (domain.Stats, error) {
 	s.statsCalls++
 	return domain.Stats{
 		UsersStarted: 2, PromoRequests: 3, PromosIssued: 1,
 		NewUsers: []domain.DailyUsers{{Date: time.Date(2026, time.October, 24, 0, 0, 0, 0, time.UTC), Count: 2}},
 		Partners: []domain.PartnerStats{{Date: time.Date(2026, time.October, 24, 0, 0, 0, 0, time.UTC), PartnerName: "Кофейня", PromosLeft: 4, RaffleEntrants: 1}},
+		Draws: []domain.DrawStats{{ID: 7, Kind: "daily", Date: time.Date(2026, time.October, 24, 0, 0, 0, 0, time.UTC),
+			DrawnAt: time.Date(2026, time.October, 25, 0, 0, 0, 0, time.UTC), PartnerName: "Кофейня",
+			Tickets: 3, Participants: 2, Winners: 1, Reserves: 1, Approved: true}},
 	}, nil
 }
 
@@ -367,6 +481,13 @@ type recordingMessenger struct {
 	acked        int
 	welcomeCalls int
 	sent         []recordedMessage
+	documents    []recordedDocument
+}
+
+type recordedDocument struct {
+	peerID   int64
+	filename string
+	contents []byte
 }
 
 func (m *recordingMessenger) Send(_ context.Context, peerID int64, text string, buttons [][]Button) error {
@@ -377,6 +498,11 @@ func (m *recordingMessenger) Send(_ context.Context, peerID int64, text string, 
 func (m *recordingMessenger) SendWelcome(ctx context.Context, peerID int64, text string, buttons [][]Button) error {
 	m.welcomeCalls++
 	return m.Send(ctx, peerID, text, buttons)
+}
+
+func (m *recordingMessenger) SendDocument(_ context.Context, peerID int64, filename string, contents []byte) error {
+	m.documents = append(m.documents, recordedDocument{peerID: peerID, filename: filename, contents: contents})
+	return nil
 }
 
 func (m *recordingMessenger) Ack(context.Context, string, int64, int64) error {

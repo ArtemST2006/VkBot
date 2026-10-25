@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ArtemST2006/VkBot/internal/domain"
+	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 )
 
 type DrawRepository interface {
@@ -20,7 +21,7 @@ func RunDrawScheduler(ctx context.Context, repo DrawRepository, log *slog.Logger
 	defer ticker.Stop()
 	for {
 		if err := runDueDraws(ctx, repo, log); err != nil && ctx.Err() == nil {
-			log.WarnContext(ctx, "automatic draw failed", "error", err)
+			log.WarnContext(ctx, "automatic draw failed", logger.Err(err))
 		}
 		select {
 		case <-ctx.Done():
