@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/ArtemST2006/VkBot/internal/lib/logger"
 )
 
 // RunPolling receives VK community updates and passes them to the handler.
@@ -45,7 +47,7 @@ func RunPolling(ctx context.Context, client *Client, handler *Handler) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		handler.log.WarnContext(ctx, "VK update failed; retrying", "error", err)
+		handler.log.WarnContext(ctx, "VK update failed; retrying", logger.Err(err))
 		timer := time.NewTimer(2 * time.Second)
 		select {
 		case <-ctx.Done():

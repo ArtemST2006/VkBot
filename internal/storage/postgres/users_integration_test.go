@@ -77,7 +77,7 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	defer pool.Close()
 
 	var migrationsApplied int
-	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM goose_db_version WHERE version_id IN (1, 2, 3) AND is_applied").Scan(&migrationsApplied); err != nil || migrationsApplied != 3 {
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM goose_db_version WHERE version_id IN (1, 2, 3, 4) AND is_applied").Scan(&migrationsApplied); err != nil || migrationsApplied != 4 {
 		t.Fatalf("Goose applied versions=%d, err=%v", migrationsApplied, err)
 	}
 
@@ -171,6 +171,15 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if stats.UsersStarted != 1 || stats.PromoRequests != 2 || stats.PromosIssued != 2 ||
 		len(stats.Partners) != 11 || len(stats.NewUsers) != 11 || stats.Partners[0].PromosLeft != 4 {
 		t.Fatalf("unexpected campaign stats: %+v", stats)
+	}
+	var requestsByPartner, issuedByPartner int64
+	for _, partnerStats := range stats.Partners {
+		requestsByPartner += partnerStats.PromoRequests
+		issuedByPartner += partnerStats.PromosIssued
+	}
+	if requestsByPartner != stats.PromoRequests || issuedByPartner != stats.PromosIssued {
+		t.Fatalf("partner stats requests=%d, issued=%d; totals=%d/%d",
+			requestsByPartner, issuedByPartner, stats.PromoRequests, stats.PromosIssued)
 	}
 	summary, err = repo.Chances(ctx, 42)
 	if err != nil || summary.Earned != 2 {
@@ -364,8 +373,48 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE draw_id = $1`, draw.ID).Scan(&queued); err != nil {
 		t.Fatal(err)
 	}
-	if active != draw.Winners || reserve != draw.Reserves || queued != draw.Winners {
+	if active != draw.Winners || reserve != draw.Reserves || queued != 0 {
 		t.Fatalf("draw results: active=%d, reserve=%d, queued=%d", active, reserve, queued)
+	}
+	statsBeforeApproval, err := repo.Stats(ctx)
+	if err != nil || len(statsBeforeApproval.Draws) != 1 || statsBeforeApproval.Draws[0].ID != draw.ID ||
+		statsBeforeApproval.Draws[0].Tickets != int64(draw.Tickets) ||
+		statsBeforeApproval.Draws[0].Winners != int64(draw.Winners) || statsBeforeApproval.Draws[0].Approved {
+		t.Fatalf("draw stats before approval=%+v, err=%v", statsBeforeApproval.Draws, err)
+	}
+	pendingDraws, err := repo.PendingDraws(ctx)
+	if err != nil || len(pendingDraws) != 1 || pendingDraws[0].ID != draw.ID || pendingDraws[0].WinnerIDs == "" {
+		t.Fatalf("pending draws=%+v, err=%v", pendingDraws, err)
+	}
+	if notice, err := repo.NextNotification(ctx); err != nil || notice != nil {
+		t.Fatalf("notification before approval=%+v, err=%v", notice, err)
+	}
+	var unapprovedWinnerVKID int64
+	if err := pool.QueryRow(ctx, `SELECT u.external_id::bigint FROM draw_results AS res
+		JOIN users AS u ON u.id = res.user_id
+		WHERE res.draw_id = $1 AND res.state = 'active' LIMIT 1`, draw.ID).Scan(&unapprovedWinnerVKID); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := bot.StartPrizeClaim(ctx, draw.ID, unapprovedWinnerVKID); err != nil || status != domain.ClaimNotWinner {
+		t.Fatalf("claim before approval=%s, err=%v", status, err)
+	}
+	approval, err := repo.ApproveDraw(ctx, draw.ID, 777)
+	if err != nil || approval != domain.DrawApproved {
+		t.Fatalf("approve draw=%q, err=%v", approval, err)
+	}
+	if approval, err = repo.ApproveDraw(ctx, draw.ID, 777); err != nil || approval != domain.DrawAlreadyApproved {
+		t.Fatalf("repeat approval=%q, err=%v", approval, err)
+	}
+	var approvedBy int64
+	if err := pool.QueryRow(ctx, `SELECT approved_by_vk_id FROM draws WHERE id = $1`, draw.ID).Scan(&approvedBy); err != nil || approvedBy != 777 {
+		t.Fatalf("approved by=%d, err=%v", approvedBy, err)
+	}
+	statsAfterApproval, err := repo.Stats(ctx)
+	if err != nil || len(statsAfterApproval.Draws) != 1 || !statsAfterApproval.Draws[0].Approved {
+		t.Fatalf("draw stats after approval=%+v, err=%v", statsAfterApproval.Draws, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE draw_id = $1`, draw.ID).Scan(&queued); err != nil || queued != draw.Winners {
+		t.Fatalf("queued after approval=%d, err=%v", queued, err)
 	}
 	firstNotice, err := repo.NextNotification(ctx)
 	if err != nil || firstNotice == nil {
@@ -430,12 +479,57 @@ func TestPostgresMigrationsAndUsers(t *testing.T) {
 	if err != nil || final.Tickets == 0 || final.Winners == 0 {
 		t.Fatalf("final draw=%+v, err=%v", final, err)
 	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE draw_id = $1`, final.ID).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("final notifications before approval=%d, err=%v", queued, err)
+	}
+	if approval, err := repo.ApproveDraw(ctx, final.ID, 777); err != nil || approval != domain.DrawApproved {
+		t.Fatalf("approve final draw=%q, err=%v", approval, err)
+	}
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM notification_outbox WHERE draw_id = $1`, final.ID).Scan(&queued); err != nil || queued != final.Winners {
-		t.Fatalf("final notifications=%d, winners=%d, err=%v", queued, final.Winners, err)
+		t.Fatalf("final notifications after approval=%d, winners=%d, err=%v", queued, final.Winners, err)
 	}
 	_, finalDue, err = repo.DueDraws(ctx)
 	if err != nil || finalDue {
 		t.Fatalf("final draw is still due: due=%v, err=%v", finalDue, err)
+	}
+	var emptyDay time.Time
+	if err := pool.QueryRow(ctx, `SELECT d.event_date FROM partner_days AS d
+		WHERE d.id <> $1 AND d.id <> $2
+		  AND NOT EXISTS (SELECT 1 FROM draws WHERE partner_day_id = d.id)
+		ORDER BY d.id LIMIT 1`, partner.ID, dayID).Scan(&emptyDay); err != nil {
+		t.Fatal(err)
+	}
+	emptyDraw, err := repo.DrawDaily(ctx, emptyDay)
+	if err != nil || emptyDraw.Tickets != 0 || emptyDraw.Winners != 0 {
+		t.Fatalf("empty daily draw=%+v, err=%v", emptyDraw, err)
+	}
+	var ticketType string
+	if err := pool.QueryRow(ctx, `SELECT jsonb_typeof(tickets) FROM draws WHERE id = $1`, emptyDraw.ID).Scan(&ticketType); err != nil || ticketType != "array" {
+		t.Fatalf("empty draw ticket JSON type=%q, err=%v", ticketType, err)
+	}
+	// Older bot versions stored a JSON null when a draw had no participants.
+	if _, err := pool.Exec(ctx, `UPDATE draws SET tickets = 'null'::jsonb WHERE id = $1`, emptyDraw.ID); err != nil {
+		t.Fatal(err)
+	}
+	statsWithLegacyDraw, err := repo.Stats(ctx)
+	if err != nil {
+		t.Fatalf("stats with legacy empty draw: %v", err)
+	}
+	var foundEmpty bool
+	for _, drawStats := range statsWithLegacyDraw.Draws {
+		if drawStats.ID == emptyDraw.ID {
+			foundEmpty = true
+			if drawStats.Tickets != 0 || drawStats.Participants != 0 {
+				t.Fatalf("legacy empty draw stats=%+v", drawStats)
+			}
+		}
+	}
+	if !foundEmpty {
+		t.Fatalf("legacy empty draw #%d missing from stats", emptyDraw.ID)
+	}
+	pendingWithLegacyDraw, err := repo.PendingDraws(ctx)
+	if err != nil || len(pendingWithLegacyDraw) != 1 || pendingWithLegacyDraw[0].ID != emptyDraw.ID || pendingWithLegacyDraw[0].Tickets != 0 {
+		t.Fatalf("pending legacy empty draw=%+v, err=%v", pendingWithLegacyDraw, err)
 	}
 }
 

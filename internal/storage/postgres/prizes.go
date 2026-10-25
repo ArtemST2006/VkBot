@@ -20,8 +20,11 @@ func (r *Repository) StartPrizeClaim(ctx context.Context, drawID, vkID int64) (d
 	var state, step string
 	var deadline *time.Time
 	err = tx.QueryRow(ctx, `SELECT u.id, res.state, res.claim_step, res.response_deadline
-		FROM draw_results AS res JOIN users AS u ON u.id = res.user_id
+		FROM draw_results AS res
+		JOIN users AS u ON u.id = res.user_id
+		JOIN draws AS d ON d.id = res.draw_id
 		WHERE res.draw_id = $1 AND u.platform = 'vk' AND u.external_id = $2
+		  AND d.approved_at IS NOT NULL
 		FOR UPDATE OF u, res`, drawID, strconv.FormatInt(vkID, 10)).Scan(&userID, &state, &step, &deadline)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ClaimNotWinner, nil
@@ -62,8 +65,10 @@ func (r *Repository) PendingPrizeName(ctx context.Context, vkID int64) (bool, er
 	var pending bool
 	err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM draw_results AS res
 		JOIN users AS u ON u.id = res.user_id
+		JOIN draws AS d ON d.id = res.draw_id
 		WHERE u.platform = 'vk' AND u.external_id = $1 AND res.state = 'active'
-		  AND res.claim_step = 'name' AND (res.response_deadline IS NULL OR res.response_deadline > now()))`,
+		  AND d.approved_at IS NOT NULL AND res.claim_step = 'name'
+		  AND (res.response_deadline IS NULL OR res.response_deadline > now()))`,
 		strconv.FormatInt(vkID, 10)).Scan(&pending)
 	return pending, err
 }
@@ -77,8 +82,11 @@ func (r *Repository) SavePrizeName(ctx context.Context, vkID int64, fullName str
 	var drawID int64
 	var deadline *time.Time
 	err = tx.QueryRow(ctx, `SELECT res.draw_id, res.response_deadline
-		FROM draw_results AS res JOIN users AS u ON u.id = res.user_id
-		WHERE u.platform = 'vk' AND u.external_id = $1 AND res.state = 'active' AND res.claim_step = 'name'
+		FROM draw_results AS res
+		JOIN users AS u ON u.id = res.user_id
+		JOIN draws AS d ON d.id = res.draw_id
+		WHERE u.platform = 'vk' AND u.external_id = $1 AND res.state = 'active'
+		  AND d.approved_at IS NOT NULL AND res.claim_step = 'name'
 		FOR UPDATE OF res`, strconv.FormatInt(vkID, 10)).Scan(&drawID, &deadline)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, domain.ClaimNotWinner, nil
@@ -107,8 +115,11 @@ func (r *Repository) ConsentPrizeClaim(ctx context.Context, drawID, vkID int64) 
 	var deadline *time.Time
 	var userID int64
 	err = tx.QueryRow(ctx, `SELECT u.id, res.state, res.claim_step, res.response_deadline
-		FROM draw_results AS res JOIN users AS u ON u.id = res.user_id
-		WHERE res.draw_id = $1 AND u.platform = 'vk' AND u.external_id = $2 FOR UPDATE OF res`,
+		FROM draw_results AS res
+		JOIN users AS u ON u.id = res.user_id
+		JOIN draws AS d ON d.id = res.draw_id
+		WHERE res.draw_id = $1 AND u.platform = 'vk' AND u.external_id = $2
+		  AND d.approved_at IS NOT NULL FOR UPDATE OF res`,
 		drawID, strconv.FormatInt(vkID, 10)).Scan(&userID, &state, &step, &deadline)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ClaimNotWinner, nil

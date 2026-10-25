@@ -57,11 +57,10 @@ func (r *Repository) DrawDaily(ctx context.Context, date time.Time) (domain.Draw
 
 	var dayID int64
 	var winners int
-	var partner, prize string
-	err = tx.QueryRow(ctx, `SELECT d.id, d.winner_count, p.name, COALESCE(d.prize_name, 'приз')
-		FROM partner_days AS d JOIN partners AS p ON p.id = d.partner_id
+	err = tx.QueryRow(ctx, `SELECT d.id, d.winner_count
+		FROM partner_days AS d
 		WHERE d.event_date = $1 AND d.event_date < (now() AT TIME ZONE 'Europe/Moscow')::date`,
-		date.Format("2006-01-02")).Scan(&dayID, &winners, &partner, &prize)
+		date.Format("2006-01-02")).Scan(&dayID, &winners)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.DrawSummary{}, fmt.Errorf("partner day is missing or has not ended")
 	}
@@ -72,7 +71,7 @@ func (r *Repository) DrawDaily(ctx context.Context, date time.Time) (domain.Draw
 	if err != nil {
 		return domain.DrawSummary{}, err
 	}
-	summary, err := createDraw(ctx, tx, "daily", &dayID, tickets, winners, partner, prize)
+	summary, err := createDraw(ctx, tx, "daily", &dayID, tickets, winners)
 	if err != nil {
 		return domain.DrawSummary{}, err
 	}
@@ -101,7 +100,7 @@ func (r *Repository) DrawFinal(ctx context.Context) (domain.DrawSummary, error) 
 	if err != nil {
 		return domain.DrawSummary{}, err
 	}
-	summary, err := createDraw(ctx, tx, "final", nil, tickets, domain.FinalWinnerCount, "", "")
+	summary, err := createDraw(ctx, tx, "final", nil, tickets, domain.FinalWinnerCount)
 	if err != nil {
 		return domain.DrawSummary{}, err
 	}
@@ -125,7 +124,10 @@ func readTickets(ctx context.Context, tx pgx.Tx, query string, arg any) ([]domai
 	return tickets, rows.Err()
 }
 
-func createDraw(ctx context.Context, tx pgx.Tx, kind string, dayID *int64, tickets []domain.DrawTicket, winnerCount int, partner, prize string) (domain.DrawSummary, error) {
+func createDraw(ctx context.Context, tx pgx.Tx, kind string, dayID *int64, tickets []domain.DrawTicket, winnerCount int) (domain.DrawSummary, error) {
+	if tickets == nil {
+		tickets = []domain.DrawTicket{}
+	}
 	snapshot, err := json.Marshal(tickets)
 	if err != nil {
 		return domain.DrawSummary{}, err
@@ -149,9 +151,6 @@ func createDraw(ctx context.Context, tx pgx.Tx, kind string, dayID *int64, ticke
 		if position < winners {
 			if _, err := tx.Exec(ctx, `INSERT INTO draw_results (draw_id, user_id, position, state, prize_slot)
 				VALUES ($1, $2, $3, 'active', $3)`, drawID, userID, position+1); err != nil {
-				return domain.DrawSummary{}, err
-			}
-			if err := queueWinner(ctx, tx, drawID, userID, kind, partner, prize); err != nil {
 				return domain.DrawSummary{}, err
 			}
 			continue
